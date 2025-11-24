@@ -60,23 +60,67 @@ class CanadianTireDownloader(BankDownloader):
         return all_transactions
 
     def _get_transient_reference(self):
-        """Get transient reference from page or generate one."""
-        # Try to get from window object
+        """Get transient reference from profile API."""
+        print("Fetching transient reference from profile...")
+        api_url = "https://www.ctfs.com/bank/v1/profile/retrieveProfile"
+        
         try:
-            auth_info = self.page.evaluate("""
-                () => {
-                    let transientRef = '';
-                    if (window.transientReference) {
-                        transientRef = window.transientReference;
+            result = self.page.evaluate("""
+                async (url) => {
+                    try {
+                        // Get CSRF token from cookies
+                        const cookies = document.cookie.split(';').reduce((acc, cookie) => {
+                            const [key, value] = cookie.trim().split('=');
+                            acc[key] = value;
+                            return acc;
+                        }, {});
+                        const csrfToken = cookies['csrftoken'] || '';
+
+                        const headers = {
+                            'Content-Type': 'application/json',
+                            'X-Requested-With': 'XMLHttpRequest'
+                        };
+                        if (csrfToken) {
+                            headers['csrftoken'] = csrfToken;
+                        }
+                        
+                        const response = await fetch(url, {
+                            method: 'POST',
+                            headers: headers,
+                            credentials: 'include',
+                            body: '{}'
+                        });
+                        
+                        const text = await response.text();
+                        return {
+                            ok: response.ok,
+                            status: response.status,
+                            text: text
+                        };
+                    } catch (error) {
+                        return { error: error.message };
                     }
-                    return { transientReference: transientRef };
                 }
-            """)
-            ref = auth_info.get("transientReference")
-            if ref:
-                print(f"Found transient reference in window: {ref[:20]}...")
-                return ref
-        except: pass
+            """, api_url)
+
+            if "error" in result:
+                print(f"Profile fetch error: {result['error']}")
+            elif not result.get("ok"):
+                print(f"Profile API error: {result.get('status')}")
+            else:
+                json_response = json.loads(result.get("text", "{}"))
+                # Extract transientReference from registeredCards
+                cards = json_response.get("registeredCards", [])
+                if cards and len(cards) > 0:
+                    ref = cards[0].get("transientReference")
+                    if ref:
+                        print(f"Found transient reference: {ref}")
+                        return ref
+                else:
+                    print("No registered cards found in profile.")
+
+        except Exception as e:
+            print(f"Error getting transient reference: {e}")
         
         print("Warning: No transient reference found, using generated UUID")
         return str(uuid.uuid4())
