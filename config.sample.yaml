@@ -1,0 +1,40 @@
+
+# Example configuration for ledger-fetch
+# This file can be placed in the project root or in ~/.ledger_fetch/config.yaml
+
+# Core settings
+# Path to the Chrome user profile directory. Playwright will store browser data here,
+# including cookies and login sessions, allowing for persistent logins.
+# It's recommended to set this to a directory outside the project folder.
+browser_profile_path: "C:/Users/YourUser/.ledger_fetch_chrome_profile" # Example for Windows
+# browser_profile_path: "~/.ledger_fetch_chrome_profile" # Example for Linux/macOS
+
+# Directory where downloaded transactions will be saved.
+# Relative paths are resolved against the current working directory where main.py is run.
+output_dir: "./transactions"
+
+# Run browser in headless mode (without a visible UI).
+# Set to true for server environments or if you don't need to see the browser.
+# Can be overridden by the --headless command-line argument.
+headless: false
+
+# Default timeout for browser actions in milliseconds.
+# Increase this if you experience frequent timeouts on slow connections or complex pages.
+timeout: 30000
+
+# Bank specific configurations
+# Each bank can have its own settings.
+# The 'enabled' flag controls whether the downloader for this bank runs.
+# Set to `false` to disable fetching for a specific bank.
+
+rbc:
+  enabled: true
+
+wealthsimple:
+  enabled: true
+
+amex:
+  enabled: true
+
+canadiantire:
+  enabled: true
