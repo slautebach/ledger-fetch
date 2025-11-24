@@ -62,5 +62,23 @@ python main.py --bank rbc
 python main.py --headless
 ```
 
-**Important:** The login process for each bank is semi-automated. You will need to manually enter your credentials and complete any two-factor authentication prompts in the browser window that Playwright opens during the initial run for each bank. Playwright will then save the session for future runs.
+**Important:** The login process for each bank is semi-automated. The script will launch a browser for you where you can log in to your bank account. Once you have logged in and completed any two-factor authentication, the script will then automatically navigate to the correct page and download all available transactions for you. Playwright will then save the session for future runs, so you won't have to log in every time.
+
+## Output Structure
+
+Upon successful execution, `ledger-fetch` will create a directory for each bank within the `output_dir` (defaulting to `./transactions`). Inside each bank's directory, transaction data will be saved into separate CSV files, organized by month.
+
+For example, transactions from RBC for October 2025 would be saved to:
+`./transactions/rbc/2025-10.csv`
+
+Each CSV file contains normalized transaction data, including:
+*   `Unique Transaction ID`
+*   `Unique Account ID`
+*   `Date` (in `YYYY-MM-DD` format)
+*   `Description`
+*   `Amount`
+*   `Currency`
+*   `Category`
+And potentially other bank-specific fields that the bank provides in their transaction exports.
+
 
