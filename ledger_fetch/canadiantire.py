@@ -7,7 +7,17 @@ from .base import BankDownloader
 from .utils import TransactionNormalizer
 
 class CanadianTireDownloader(BankDownloader):
-    """Canadian Tire Transaction Downloader."""
+    """
+    Canadian Tire Financial Services (CTFS) Transaction Downloader.
+    
+    This downloader handles the retrieval of transactions from the CTFS website.
+    It employs a sophisticated API interaction strategy:
+    1.  Interactive Login: The user logs in manually.
+    2.  Token Extraction: It extracts the `transientReference` and `csrftoken` from 
+        the browser's state (cookies and profile API).
+    3.  API Calls: It uses these tokens to query the internal API (`/dash/v1/account/retrieveTransactions`)
+        for each available statement date.
+    """
 
     def get_bank_name(self) -> str:
         return "canadiantire"

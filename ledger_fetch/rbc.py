@@ -6,7 +6,19 @@ from .base import BankDownloader
 from .utils import TransactionNormalizer
 
 class RBCDownloader(BankDownloader):
-    """RBC Transaction Downloader."""
+    """
+    RBC (Royal Bank of Canada) Transaction Downloader.
+    
+    This downloader automates the "Download Transactions" feature on the RBC Online Banking site.
+    
+    Workflow:
+    1.  Interactive Login: The user logs in manually.
+    2.  Navigation: The script navigates to the "Account Services" page.
+    3.  Form Automation: It locates the "Download Transactions" link, selects "CSV" format,
+        "All Accounts", and "All transactions on file".
+    4.  Download: It submits the form and waits for the file download.
+    5.  Parsing: It parses the downloaded CSV file, handling RBC's specific CSV format quirks.
+    """
 
     def get_bank_name(self) -> str:
         return "rbc"

@@ -7,11 +7,27 @@ from .base import BankDownloader
 from .utils import TransactionNormalizer
 
 class CIBCDownloader(BankDownloader):
+    """
+    Downloader for CIBC (Canadian Imperial Bank of Commerce).
+    
+    This downloader uses a hybrid approach:
+    1.  Interactive Login: The user logs in manually via a browser window.
+    2.  Token Interception: The script listens for API requests to capture session tokens.
+    3.  API Direct Access: Once tokens are captured, it uses the internal CIBC JSON API 
+        to fetch transactions directly, bypassing the UI for data retrieval.
+    """
+    
     def get_bank_name(self) -> str:
+        """Return the unique identifier for this bank."""
         return "cibc"
 
     def login(self):
-        """Navigate to login page and wait for manual login."""
+        """
+        Navigate to the login page and wait for the user to log in.
+        
+        The script waits for the dashboard element (.card-container) to appear
+        before proceeding.
+        """
         print("Navigating to CIBC login page...")
         # User requested specific login URL
         self.page.goto("https://www.cibc.com/en/personal-banking.html?loggedOut=true")
@@ -30,13 +46,23 @@ class CIBCDownloader(BankDownloader):
 
     def navigate_to_transactions(self):
         """
-        No-op here, as we handle navigation per account in download_transactions.
+        No-op. 
+        
+        Navigation is handled dynamically in `download_transactions` by iterating 
+        through discovered accounts.
         """
         pass
 
     def download_transactions(self) -> List[Dict[str, Any]]:
         """
-        Scrapes accounts from dashboard, then iterates to fetch transactions.
+        Orchestrate the transaction download process.
+        
+        1.  Captures session tokens (x-auth-token) from background API requests.
+        2.  Scrapes the dashboard for available accounts (IDs and Names).
+        3.  Iterates through each account.
+        4.  For each account, iterates through the past 12 months.
+        5.  Fetches transactions for each month using the internal JSON API.
+        6.  Normalizes and returns the aggregated list of transactions.
         """
         # 1. Capture tokens from any API request on the dashboard
         print("Capturing session tokens...")

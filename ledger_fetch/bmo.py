@@ -7,9 +7,17 @@ from .utils import TransactionNormalizer
 
 
 class BMODownloader(BankDownloader):
-    """BMO (Bank of Montreal) Transaction Downloader.
+    """
+    BMO (Bank of Montreal) Transaction Downloader.
     
-    Uses REST API to fetch transaction data in JSON format.
+    This downloader automates the retrieval of transaction data from BMO's online banking.
+    It uses a hybrid approach:
+    1.  Interactive Login: The user logs in manually.
+    2.  API Interception: The script executes JavaScript within the browser context to 
+        call BMO's internal REST API (`/api/cdb/utility/cache/transient-extended-credit-card-data/get`).
+    
+    This allows for fetching detailed transaction data, including pending transactions
+    and extended metadata, which might not be available in standard CSV exports.
     """
 
     def get_bank_name(self) -> str:

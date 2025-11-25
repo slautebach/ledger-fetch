@@ -32,7 +32,20 @@ class PlaywrightResponseAdapter:
         return json.loads(self._text)
 
 class WealthsimpleDownloader(BankDownloader):
-    """Wealthsimple Transaction Downloader."""
+    """
+    Wealthsimple Transaction Downloader.
+    
+    This downloader leverages the `ws-api` library (if available) and the browser's
+    authenticated session to fetch transactions directly from Wealthsimple's API.
+    
+    Workflow:
+    1.  Interactive Login: The user logs in manually.
+    2.  Session Hijacking: The script extracts the OAuth token, session ID, and 
+        device ID from the browser's cookies and local storage.
+    3.  API Initialization: It initializes a `WealthsimpleAPI` client using these credentials.
+    4.  Data Fetching: It iterates through all accounts and fetches activities (transactions)
+        using the API.
+    """
 
     def get_bank_name(self) -> str:
         return "wealthsimple"

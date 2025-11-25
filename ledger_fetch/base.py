@@ -5,7 +5,13 @@ from playwright.sync_api import Playwright, BrowserContext, Page, sync_playwrigh
 from .config import Config, settings
 
 class BankDownloader(ABC):
-    """Abstract base class for bank transaction downloaders."""
+    """
+    Abstract base class for bank transaction downloaders.
+    
+    This class defines the interface that all bank-specific downloaders must implement.
+    It handles the common Playwright setup and teardown, as well as the high-level
+    execution flow (login -> navigate -> download -> save).
+    """
     
     def __init__(self, config: Config = settings):
         self.config = config
@@ -14,7 +20,17 @@ class BankDownloader(ABC):
         self.playwright: Playwright = None
 
     def run(self):
-        """Main execution method."""
+        """
+        Main execution method.
+        
+        This method orchestrates the entire download process:
+        1.  Sets up the Playwright browser.
+        2.  Performs the login.
+        3.  Navigates to the transaction page.
+        4.  Downloads and parses transactions.
+        5.  Saves the transactions to CSV files.
+        6.  Cleans up resources.
+        """
         with sync_playwright() as p:
             self.playwright = p
             self.setup_driver()
@@ -27,7 +43,13 @@ class BankDownloader(ABC):
                 self.teardown()
 
     def setup_driver(self):
-        """Initialize Playwright browser context."""
+        """
+        Initialize Playwright browser context.
+        
+        Launches a persistent Chrome context using the configured profile path.
+        This allows the browser to retain cookies and session data between runs,
+        which is crucial for maintaining login sessions and avoiding 2FA prompts.
+        """
         print(f"Launching browser with profile: {self.config.browser_profile_path}")
         
         # Ensure profile directory exists
@@ -45,17 +67,37 @@ class BankDownloader(ABC):
 
     @abstractmethod
     def login(self):
-        """Perform login actions."""
+        """
+        Perform login actions.
+        
+        This method should handle the navigation to the login page and any
+        necessary steps to authenticate the user. It may be interactive (waiting
+        for manual user input) or automated.
+        """
         pass
 
     @abstractmethod
     def navigate_to_transactions(self):
-        """Navigate to the transaction download page."""
+        """
+        Navigate to the transaction download page.
+        
+        This method should handle the navigation from the post-login state (dashboard)
+        to the specific page where transactions can be viewed or downloaded.
+        """
         pass
 
     @abstractmethod
     def download_transactions(self) -> List[Dict[str, Any]]:
-        """Download and parse transactions."""
+        """
+        Download and parse transactions.
+        
+        This method should perform the actual extraction of transaction data.
+        It may involve downloading a file (CSV/OFX) and parsing it, or scraping
+        data directly from the page or API.
+        
+        Returns:
+            A list of dictionaries, where each dictionary represents a transaction.
+        """
         pass
 
     def save_transactions(self, transactions: List[Dict[str, Any]]):

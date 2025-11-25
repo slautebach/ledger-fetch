@@ -6,11 +6,22 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 class TransactionNormalizer:
-    """Helper to standardize transaction data."""
+    """
+    Utility class for standardizing transaction data.
+    
+    This class provides static methods to clean and normalize common transaction
+    fields such as descriptions and dates, ensuring consistency across different
+    bank sources.
+    """
     
     @staticmethod
     def clean_description(description: str) -> str:
-        """Clean and simplify transaction descriptions."""
+        """
+        Clean and simplify transaction descriptions.
+        
+        Removes excessive whitespace and common bank prefixes (e.g., "RBC ", "AMEX ")
+        to produce a cleaner, more readable description.
+        """
         if not description:
             return ""
         
@@ -24,7 +35,12 @@ class TransactionNormalizer:
 
     @staticmethod
     def normalize_date(date_str: str) -> str:
-        """Ensure date is in YYYY-MM-DD format."""
+        """
+        Ensure date is in YYYY-MM-DD format.
+        
+        Attempts to parse various common date formats and convert them to the
+        standard ISO 8601 format (YYYY-MM-DD).
+        """
         if not date_str:
             return ""
             
@@ -48,7 +64,13 @@ class TransactionNormalizer:
 
     @staticmethod
     def generate_transaction_id(date: str, amount: float, description: str, account_id: str) -> str:
-        """Generate a deterministic unique ID for a transaction."""
+        """
+        Generate a deterministic unique ID for a transaction.
+        
+        Creates an MD5 hash based on the transaction's core properties (date, amount,
+        description, and account ID). This is used as a fallback when the bank
+        does not provide a unique transaction ID.
+        """
         # Create a string unique to this transaction
         # Note: This might collide if there are identical transactions on the same day
         # Ideally we'd use a bank-provided ID, but if not available, this is a fallback.
@@ -56,7 +78,13 @@ class TransactionNormalizer:
         return hashlib.md5(raw_str.encode('utf-8')).hexdigest()
 
 class CSVWriter:
-    """Helper to write normalized transactions to CSV."""
+    """
+    Helper class to write normalized transactions to CSV files.
+    
+    This class handles the creation of the output directory and the writing of
+    transaction dictionaries to CSV files, ensuring that all required fields
+    are present and properly ordered.
+    """
     
     REQUIRED_FIELDS = [
         'Unique Transaction ID',

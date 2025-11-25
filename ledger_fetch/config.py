@@ -11,12 +11,14 @@ class BankConfig(BaseSettings):
 
 class Config(BaseSettings):
     """
-    Global configuration for ledger-fetch.
+    Global configuration for the ledger-fetch application.
     
-    Loads settings from:
-    1. Environment variables (prefix: LEDGER_FETCH_)
-    2. Config file (yaml/toml)
-    3. Defaults
+    This class manages all configuration settings, including browser options,
+    output directories, and bank-specific settings. It supports loading configuration
+    from:
+    1.  Environment variables (prefixed with LEDGER_FETCH_)
+    2.  Configuration files (YAML/TOML)
+    3.  Default values defined in this class
     """
     
     # Core settings

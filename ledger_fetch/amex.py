@@ -9,7 +9,19 @@ from .base import BankDownloader
 from .utils import TransactionNormalizer
 
 class AmexDownloader(BankDownloader):
-    """American Express Transaction Downloader."""
+    """
+    American Express Transaction Downloader.
+    
+    This downloader automates the process of downloading CSV statements from the
+    American Express website.
+    
+    Workflow:
+    1.  Interactive Login: The user logs in manually.
+    2.  Navigation: The script ensures the user is on the "Statements & Activity" page.
+    3.  Discovery: It scans the page for available statement download buttons.
+    4.  Download: It triggers the download for each available statement (CSV format).
+    5.  Parsing: It reads the downloaded CSV files and normalizes the data.
+    """
 
     def get_bank_name(self) -> str:
         return "amex"
