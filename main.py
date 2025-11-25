@@ -7,6 +7,8 @@ from ledger_fetch.rbc import RBCDownloader
 from ledger_fetch.wealthsimple import WealthsimpleDownloader
 from ledger_fetch.amex import AmexDownloader
 from ledger_fetch.canadiantire import CanadianTireDownloader
+from ledger_fetch.bmo import BMODownloader
+from ledger_fetch.cibc import CIBCDownloader
 
 def get_downloaders(banks: List[str]) -> List[BankDownloader]:
     """Return list of downloader instances based on requested banks."""
@@ -23,6 +25,12 @@ def get_downloaders(banks: List[str]) -> List[BankDownloader]:
         
     if 'all' in banks or 'canadiantire' in banks:
         downloaders.append(CanadianTireDownloader())
+
+    if 'all' in banks or 'bmo' in banks:
+        downloaders.append(BMODownloader())
+
+    if 'all' in banks or 'cibc' in banks:
+        downloaders.append(CIBCDownloader())
         
     return downloaders
 
@@ -30,7 +38,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ledger Fetch - Financial Transaction Downloader")
     parser.add_argument(
         "--bank", 
-        choices=['all', 'rbc', 'wealthsimple', 'amex', 'canadiantire'], 
+        choices=['all', 'rbc', 'wealthsimple', 'amex', 'canadiantire', 'bmo', 'cibc'], 
         default='all',
         help="Specific bank to download from (default: all)"
     )

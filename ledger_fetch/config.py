@@ -82,10 +82,13 @@ class Config(BaseSettings):
                     file_data = yaml.safe_load(f)
                     if file_data:
                         config_data = file_data
+                print(f"Loaded configuration from: {found_path.resolve()}")
             except ImportError:
                 print("Warning: PyYAML not installed. Skipping config file loading.")
             except Exception as e:
                 print(f"Warning: Error loading config file {found_path}: {e}")
+        else:
+            print("No config file found. Using default configuration.")
 
         # Pydantic will merge init kwargs (file_data) with env vars and defaults
         return cls(**config_data)
