@@ -208,3 +208,5 @@ __marimo__/
 /.vs
 /transactions
 /config.yaml
+/actual-sync/data
+/actual-sync/node_modules
