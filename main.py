@@ -1,8 +1,11 @@
 import argparse
 import sys
+import pandas as pd
 from typing import List
+from pathlib import Path
 from ledger_fetch.config import settings
 from ledger_fetch.base import BankDownloader
+from ledger_fetch.utils import TransactionNormalizer
 from ledger_fetch.rbc import RBCDownloader
 from ledger_fetch.wealthsimple import WealthsimpleDownloader
 from ledger_fetch.amex import AmexDownloader
@@ -34,6 +37,46 @@ def get_downloaders(banks: List[str]) -> List[BankDownloader]:
         
     return downloaders
 
+def run_normalization():
+    """Run payee normalization on all existing CSV files."""
+    print("Running offline payee normalization...")
+    output_dir = settings.output_dir
+    if not output_dir.exists():
+        print(f"Output directory {output_dir} does not exist.")
+        return
+
+    # Walk through all files in output_dir
+    count = 0
+    for file_path in output_dir.rglob("*.csv"):
+        # Skip accounts.csv and non-transaction files if possible
+        if file_path.name.lower() == "accounts.csv":
+            continue
+            
+        print(f"Processing {file_path.name}...")
+        try:
+            # Read CSV
+            df = pd.read_csv(file_path)
+            
+            # Check if Description column exists
+            if 'Description' not in df.columns:
+                print(f"  Skipping {file_path.name}: No 'Description' column found.")
+                continue
+            
+            # Apply normalization
+            # We update 'Payee' and 'Payee Name' based on 'Description'
+            df['Payee'] = df['Description'].apply(lambda x: TransactionNormalizer.normalize_payee(str(x)))
+            df['Payee Name'] = df['Payee']
+            
+            # Save back to CSV
+            df.to_csv(file_path, index=False)
+            print(f"  Updated {file_path.name}")
+            count += 1
+            
+        except Exception as e:
+            print(f"  Error processing {file_path.name}: {e}")
+    
+    print(f"Normalization complete. Processed {count} files.")
+
 def main():
     parser = argparse.ArgumentParser(description="Ledger Fetch - Financial Transaction Downloader")
     parser.add_argument(
@@ -43,12 +86,31 @@ def main():
         help="Specific bank to download from (default: all)"
     )
     parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Download from all banks (equivalent to --bank all)"
+    )
+    parser.add_argument(
         "--headless", 
         action="store_true", 
         help="Run in headless mode (overrides config)"
     )
+    parser.add_argument(
+        "--normalize",
+        action="store_true",
+        help="Run payee normalization on existing transaction files without downloading"
+    )
     
     args = parser.parse_args()
+    
+    # Handle --normalize flag
+    if args.normalize:
+        run_normalization()
+        return
+
+    # Handle --all flag
+    if args.all:
+        args.bank = 'all'
     
     # Update config from args
     if args.headless:

@@ -1,0 +1,22 @@
+{
+  "name": "actual-sync",
+  "version": "1.0.0",
+  "description": "Syncs transactions from ledger-fetch CSVs to Actual Budget",
+  "main": "index.js",
+  "scripts": {
+    "start": "ts-node index.ts"
+  },
+  "dependencies": {
+    "@actual-app/api": "^25.11.0",
+    "csv-parser": "^3.0.0",
+    "js-yaml": "^4.1.0",
+    "yargs": "^17.0.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.10.1",
+    "@types/yargs": "^17.0.35",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

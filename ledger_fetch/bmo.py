@@ -428,6 +428,8 @@ class BMODownloader(BankDownloader):
             # Clean description
             description = TransactionNormalizer.clean_description(description)
             
+            payee = TransactionNormalizer.normalize_payee(description)
+
             # Determine signed amount
             # DR (Debit) = money spent (negative)
             # CR (Credit) = payment/refund (positive)
@@ -447,6 +449,8 @@ class BMODownloader(BankDownloader):
                 'Unique Transaction ID': unique_id,
                 'Date': date,
                 'Description': description,
+                'Payee': payee,
+                'Payee Name': payee,
                 'Amount': amount,
                 'Currency': 'CAD',
                 'Category': '',

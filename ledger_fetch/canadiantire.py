@@ -40,12 +40,17 @@ class CanadianTireDownloader(BankDownloader):
 
     def navigate_to_transactions(self):
         """Navigate to account details page."""
+        target_url = "https://www.ctfs.com/content/dash/en/private/Details.html#!/view?tab=account-details"
+        if target_url in self.page.url:
+            print("Already on account details page. Skipping navigation.")
+            return
+
         print("Navigating to account details page...")
         try:
-            self.page.goto("https://www.ctfs.com/content/dash/en/private/Details.html#!/view?tab=account-details", wait_until="networkidle")
-            time.sleep(3)
+            self.page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+            time.sleep(5)
         except Exception as e:
-            print(f"Could not auto-navigate: {e}")
+            print(f"Warning: Could not auto-navigate (might be already there): {e}")
 
     def download_transactions(self) -> List[Dict[str, Any]]:
         """Fetch transactions via API."""
@@ -117,8 +122,16 @@ class CanadianTireDownloader(BankDownloader):
                 print(f"Profile fetch error: {result['error']}")
             elif not result.get("ok"):
                 print(f"Profile API error: {result.get('status')}")
+                print(f"Response text: {result.get('text')[:200]}...") # Log first 200 chars
             else:
-                json_response = json.loads(result.get("text", "{}"))
+                text = result.get("text", "{}")
+                try:
+                    json_response = json.loads(text)
+                except json.JSONDecodeError as e:
+                    print(f"Error parsing profile JSON: {e}")
+                    print(f"Raw response text: {text[:500]}...") # Log raw text
+                    return str(uuid.uuid4())
+
                 # Extract transientReference from registeredCards
                 cards = json_response.get("registeredCards", [])
                 if cards and len(cards) > 0:
@@ -128,6 +141,8 @@ class CanadianTireDownloader(BankDownloader):
                         return ref
                 else:
                     print("No registered cards found in profile.")
+                    # Debug: print keys
+                    print(f"Profile keys: {list(json_response.keys())}")
 
         except Exception as e:
             print(f"Error getting transient reference: {e}")
@@ -251,24 +266,26 @@ class CanadianTireDownloader(BankDownloader):
             ref_num = txn.get('referenceNumber', '')
             unique_trans_id = ref_num if ref_num else TransactionNormalizer.generate_transaction_id(date, amount, description, "CTFS")
             
+            # Determine if transfer (Payment)
+            is_transfer = trans_type == 'PAYMENT'
+
+            payee = TransactionNormalizer.normalize_payee(description)
+
             transaction = {
-                'Unique Account ID': "CTFS",
                 'Unique Transaction ID': unique_trans_id,
+                'Unique Account ID': "CTFS",
+                'Account Name': "Canadian Tire Options Mastercard",
                 'Date': date,
                 'Description': description,
+                'Payee': payee,
+                'Payee Name': payee,
                 'Amount': amount,
                 'Currency': 'CAD',
                 'Category': '',
-                'Type': trans_type,
-                'Merchant': merchant,
-                'Reference Number': ref_num
+                'Is Transfer': is_transfer,
+                'Notes': f"Type: {trans_type}, Ref: {ref_num}"
             }
             
-            # Add other fields
-            for k, v in txn.items():
-                if k not in ['tranDate', 'merchant', 'amount', 'type', 'referenceNumber']:
-                    transaction[k] = v
-                    
             transactions.append(transaction)
             
         return transactions

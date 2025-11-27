@@ -2,6 +2,7 @@ import json
 import urllib.parse
 import re
 import time
+import json
 from datetime import datetime
 from typing import List, Dict, Any
 from .base import BankDownloader
@@ -131,6 +132,53 @@ class WealthsimpleDownloader(BankDownloader):
         accounts = ws.get_accounts()
         print(f"Found {len(accounts)} accounts.")
         
+        # Export accounts to CSV
+        if accounts:
+            import csv
+            accounts_file = self.config.output_dir / self.get_bank_name() / "accounts.csv"
+            self.config.output_dir.mkdir(parents=True, exist_ok=True)
+            (self.config.output_dir / self.get_bank_name()).mkdir(parents=True, exist_ok=True)
+            
+            # Define columns
+            fieldnames = [
+                'Unique Account ID', 'Account Name', 'Account Number', 'Currency', 
+                'Status', 'Type', 'Unified Type', 'Net Value', 'Net Deposits', 'Created At'
+            ]
+            
+            clean_accounts = []
+            for acc in accounts:
+                # Extract nested financials safely
+                financials = acc.get('financials', {})
+                current_combined = financials.get('currentCombined', {})
+                net_liquidation = current_combined.get('netLiquidationValue', {})
+                net_deposits = current_combined.get('netDeposits', {})
+                
+                # Extract custodian account number (usually the first one)
+                custodian_accounts = acc.get('custodianAccounts', [])
+                account_number = ''
+                if custodian_accounts and isinstance(custodian_accounts, list) and len(custodian_accounts) > 0:
+                    account_number = custodian_accounts[0].get('id', '')
+
+                clean_acc = {
+                    'Unique Account ID': acc.get('id'),
+                    'Account Name': acc.get('nickname'),
+                    'Account Number': account_number,
+                    'Currency': acc.get('currency'),
+                    'Status': acc.get('status'),
+                    'Type': acc.get('type'),
+                    'Unified Type': acc.get('unifiedAccountType'),
+                    'Net Value': net_liquidation.get('amount'),
+                    'Net Deposits': net_deposits.get('amount'),
+                    'Created At': acc.get('createdAt')
+                }
+                clean_accounts.append(clean_acc)
+            
+            with open(accounts_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(clean_accounts)
+            print(f"Exported clean account details to {accounts_file}")
+        
         all_transactions = []
         
         for account in accounts:
@@ -158,7 +206,27 @@ class WealthsimpleDownloader(BankDownloader):
         return all_transactions
 
     def _process_activity(self, activity, account_name, account_id):
-        """Process a single activity into a transaction dict."""
+        """
+        Process a single activity into a transaction dict.
+        
+        Raw Activity Fields (Wealthsimple API):
+        - id: str (e.g., "order-...")
+        - canonicalId: str (e.g., "order-...")
+        - occurredAt: str (ISO 8601 date)
+        - date: str (ISO 8601 date, alternative)
+        - created_at: str (ISO 8601 date, alternative)
+        - amount: float or dict (value, currency)
+        - amountSign: str ("positive", "negative")
+        - currency: str (e.g., "CAD")
+        - description: str (Raw description)
+        - primary_action: str (Alternative description)
+        - type: str (e.g., "DEPOSIT", "WITHDRAWAL", "BUY", "SELL", "DIVIDEND", "E_TRANSFER_FUNDING")
+        - category: str (e.g., "transfer", "investment")
+        - assetSymbol: str (e.g., "XEQT")
+        - p2pMessage: str (e-transfer message)
+        - p2pHandle: str
+        - status: str (e.g., "posted")
+        """
         # Date
         raw_date = activity.get('occurredAt') or activity.get('date') or activity.get('created_at')
         date = TransactionNormalizer.normalize_date(raw_date)
@@ -193,16 +261,33 @@ class WealthsimpleDownloader(BankDownloader):
         ws_id = activity.get('canonicalId') or activity.get('id')
         unique_trans_id = ws_id if ws_id else TransactionNormalizer.generate_transaction_id(date, amount, cleaned_description, account_id)
         
+        payee = TransactionNormalizer.normalize_payee(cleaned_description)
+
+        # New Fields Logic
+        # Explicitly handling INTERNAL_TRANSFER as per requirements
+        is_transfer = trans_type in ['DEPOSIT', 'WITHDRAWAL', 'INTERNAL_TRANSFER', 'E_TRANSFER_FUNDING', 'E_TRANSFER_CASHOUT']
+        notes = activity.get('p2pMessage', '')
+        
         txn = {
             'Unique Account ID': account_id,
             'Unique Transaction ID': unique_trans_id,
+            'Account Name': account_name,
             'Date': date,
             'Description': cleaned_description,
+            'Payee': payee,
+            'Payee Name': payee,
             'Amount': amount,
             'Currency': activity.get('amount', {}).get('currency') if isinstance(activity.get('amount'), dict) else activity.get('currency'),
             'Category': '', # Can implement categorization logic if needed
+            'Is Transfer': is_transfer,
+            'Notes': notes,
             'Account': account_name,
             'Asset Symbol': asset_symbol,
+            'Asset Quantity': activity.get('assetQuantity'),
+            'Status': activity.get('status'),
+            'Sub Type': activity.get('subType'),
+            'Fees': activity.get('fees'),
+            'FX Rate': activity.get('fxRate'),
             'Type': trans_type,
             'ID': ws_id
         }

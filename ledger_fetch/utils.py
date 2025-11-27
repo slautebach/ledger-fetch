@@ -29,8 +29,75 @@ class TransactionNormalizer:
         cleaned = re.sub(r'\s+', ' ', str(description)).strip()
         
         # Remove common prefixes that add clutter (can be expanded)
-        cleaned = re.sub(r'^(RBC |ROYAL BANK |AMEX |Wealthsimple )', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'^(RBC |ROYAL BANK |AMEX )', '', cleaned, flags=re.IGNORECASE)
         
+        return cleaned
+
+    _payee_rules = None
+
+    @classmethod
+    def _load_payee_rules(cls):
+        if cls._payee_rules is not None:
+            return cls._payee_rules
+        
+        from .config import settings
+        import yaml
+        
+        rules_path = settings.payee_rules_path
+        if not rules_path.is_absolute():
+            # Try finding it relative to current working directory first
+            if not rules_path.exists():
+                 # Fallback to package directory if needed, or just keep as is
+                 pass
+
+        cls._payee_rules = []
+        if rules_path.exists():
+            try:
+                with open(rules_path, 'r', encoding='utf-8') as f:
+                    data = yaml.safe_load(f)
+                    if data and 'rules' in data:
+                        cls._payee_rules = data['rules']
+            except Exception as e:
+                print(f"Warning: Failed to load payee rules from {rules_path}: {e}")
+        else:
+            print(f"Warning: Payee rules file not found at {rules_path}")
+            
+        return cls._payee_rules
+
+    @classmethod
+    def normalize_payee(cls, raw_payee: str) -> str:
+        """
+        Normalize payee name based on configured rules.
+        
+        Applies a 'First Match Wins' strategy using the rules defined in
+        payee_rules.yaml. If no rule matches, returns the cleaned original payee.
+        """
+        if not raw_payee:
+            return ""
+            
+        cleaned = cls.clean_description(raw_payee)
+        rules = cls._load_payee_rules()
+        
+        for rule in rules:
+            name = rule.get('name')
+            patterns = rule.get('patterns', [])
+            
+            for pattern in patterns:
+                # Check for regex prefix
+                if pattern.startswith("regex:"):
+                    regex_pattern = pattern[6:]
+                    try:
+                        if re.search(regex_pattern, cleaned, re.IGNORECASE):
+                            return name
+                    except re.error:
+                        # Log warning only if verbose? For now, just skip invalid regex
+                        print(f"Warning: Invalid regex pattern '{regex_pattern}' for rule '{name}'")
+                        continue
+                        
+                # Simple case-insensitive substring match
+                elif pattern.lower() in cleaned.lower():
+                    return name
+                    
         return cleaned
 
     @staticmethod
@@ -84,16 +151,38 @@ class CSVWriter:
     This class handles the creation of the output directory and the writing of
     transaction dictionaries to CSV files, ensuring that all required fields
     are present and properly ordered.
+    
+    The output CSV will always contain the following columns (in order):
+    1. Unique Transaction ID
+    2. Unique Account ID
+    3. Account Name
+    4. Date
+    5. Description
+    6. Payee
+    7. Payee Name
+    8. Amount
+    9. Currency
+    10. Category
+    11. Is Transfer
+    12. Notes
+    
+    Any additional keys in the transaction dictionaries will be appended as
+    extra columns.
     """
     
     REQUIRED_FIELDS = [
         'Unique Transaction ID',
         'Unique Account ID',
+        'Account Name',
         'Date',
         'Description',
+        'Payee',
+        'Payee Name',
         'Amount',
         'Currency',
-        'Category'
+        'Category',
+        'Is Transfer',
+        'Notes'
     ]
     
     def __init__(self, output_dir: Path):

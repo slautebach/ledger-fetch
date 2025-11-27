@@ -97,6 +97,25 @@ class BankDownloader(ABC):
         
         Returns:
             A list of dictionaries, where each dictionary represents a transaction.
+            
+            The dictionary MUST contain the following keys to ensure compatibility with
+            the CSVWriter and downstream consumers (like actual-sync):
+            
+            - 'Unique Transaction ID': str - A unique identifier for the transaction.
+            - 'Unique Account ID': str - A unique identifier for the account.
+            - 'Account Name': str - The human-readable name of the account.
+            - 'Date': str - The transaction date in YYYY-MM-DD format.
+            - 'Description': str - The raw transaction description.
+            - 'Payee': str - The normalized payee name (optional).
+            - 'Payee Name': str - The normalized payee name (alternative to Payee).
+            - 'Amount': float - The transaction amount (signed).
+            - 'Currency': str - The currency code (e.g., 'CAD', 'USD').
+            - 'Category': str - The transaction category (optional).
+            - 'Is Transfer': bool/str - Flag indicating if it's a transfer.
+            - 'Notes': str - Additional notes or memo.
+            
+            Additional fields may be included but are not guaranteed to be processed
+            by all consumers.
         """
         pass
 

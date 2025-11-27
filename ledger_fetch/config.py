@@ -38,6 +38,10 @@ class Config(BaseSettings):
         default=30000,
         description="Default timeout for browser actions in milliseconds"
     )
+    payee_rules_path: Path = Field(
+        default=Path("payee_rules.yaml"),
+        description="Path to the payee normalization rules file"
+    )
     
     # Bank specific configs
     rbc: BankConfig = Field(default_factory=BankConfig)
@@ -48,6 +52,7 @@ class Config(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix='LEDGER_FETCH_',
         env_nested_delimiter='__',
+        extra='ignore'
         # We will load the config file manually in a factory method or 
         # let the user pass it. For now, we'll keep it simple.
         # To support yaml/toml automatically, we might need extra dependencies 

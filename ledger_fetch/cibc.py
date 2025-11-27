@@ -223,6 +223,8 @@ class CIBCDownloader(BankDownloader):
                             normalized_date = TransactionNormalizer.normalize_date(date_str)
                             clean_desc = TransactionNormalizer.clean_description(desc)
                             
+                            payee = TransactionNormalizer.normalize_payee(clean_desc)
+
                             t = {
                                 'Date': normalized_date,
                                 'Description': clean_desc,
@@ -231,6 +233,12 @@ class CIBCDownloader(BankDownloader):
                                 'Category': '',
                                 'Unique Account ID': acc['id'],
                                 'Unique Transaction ID': tx.get('id') or TransactionNormalizer.generate_transaction_id(normalized_date, amount, clean_desc, acc['id']),
+                                # Required columns for CSVWriter
+                                'Account Name': acc['name'],
+                                'Payee': payee,
+                                'Payee Name': payee,
+                                'Is Transfer': 'Transfer' in clean_desc or 'Transfer' in (tx.get('transactionType') or ''),
+                                'Notes': '',
                                 # Extra details
                                 'Transaction Type': tx.get('transactionType'),
                                 'Transaction Location': tx.get('transactionLocation'),

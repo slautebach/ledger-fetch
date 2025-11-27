@@ -323,11 +323,15 @@ class AmexDownloader(BankDownloader):
                 ref = row.get('Reference')
                 unique_trans_id = str(ref) if not pd.isna(ref) else TransactionNormalizer.generate_transaction_id(date, amount, description, "AMEX")
                 
+                payee = TransactionNormalizer.normalize_payee(description)
+
                 txn = {
                     'Unique Account ID': "AMEX", # Amex CSV doesn't usually have account number
                     'Unique Transaction ID': unique_trans_id,
                     'Date': date,
                     'Description': description,
+                    'Payee': payee,
+                    'Payee Name': payee,
                     'Amount': amount,
                     'Currency': 'CAD', # Assumption
                     'Category': '',
