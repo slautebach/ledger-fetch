@@ -210,3 +210,4 @@ __marimo__/
 /config.yaml
 /actual-sync/data
 /actual-sync/node_modules
+/payee_rules.yaml
