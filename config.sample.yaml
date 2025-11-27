@@ -38,3 +38,10 @@ amex:
 
 canadiantire:
   enabled: true
+
+
+
+actual:
+  server_url: "url"
+  password: "password"
+  sync_id: "sync_id"
