@@ -3,6 +3,7 @@ from typing import List, Dict, Any
 from pathlib import Path
 from playwright.sync_api import Playwright, BrowserContext, Page, sync_playwright
 from .config import Config, settings
+from .models import Transaction, Account
 
 class BankDownloader(ABC):
     """
@@ -39,6 +40,13 @@ class BankDownloader(ABC):
                 self.navigate_to_transactions()
                 transactions = self.download_transactions()
                 self.save_transactions(transactions)
+                # We should also fetch and save accounts if possible, but that might be bank specific
+                # For now, let's assume download_transactions might also trigger account fetching or we add a new step
+                # But the plan said "Implement fetch_accounts (or similar) to return List[Account] and save them."
+                # So let's add a hook for it.
+                accounts = self.fetch_accounts()
+                if accounts:
+                    self.save_accounts(accounts)
             finally:
                 self.teardown()
 
@@ -86,8 +94,15 @@ class BankDownloader(ABC):
         """
         pass
 
+    def fetch_accounts(self) -> List[Account]:
+        """
+        Fetch account details.
+        Override this in subclasses to extract account information.
+        """
+        return []
+
     @abstractmethod
-    def download_transactions(self) -> List[Dict[str, Any]]:
+    def download_transactions(self) -> List[Transaction]:
         """
         Download and parse transactions.
         
@@ -96,41 +111,20 @@ class BankDownloader(ABC):
         data directly from the page or API.
         
         Returns:
-            A list of dictionaries, where each dictionary represents a transaction.
-            
-            The dictionary MUST contain the following keys to ensure compatibility with
-            the CSVWriter and downstream consumers (like actual-sync):
-            
-            - 'Unique Transaction ID': str - A unique identifier for the transaction.
-            - 'Unique Account ID': str - A unique identifier for the account.
-            - 'Account Name': str - The human-readable name of the account.
-            - 'Date': str - The transaction date in YYYY-MM-DD format.
-            - 'Description': str - The raw transaction description.
-            - 'Payee': str - The normalized payee name (optional).
-            - 'Payee Name': str - The normalized payee name (alternative to Payee).
-            - 'Amount': float - The transaction amount (signed).
-            - 'Currency': str - The currency code (e.g., 'CAD', 'USD').
-            - 'Category': str - The transaction category (optional).
-            - 'Is Transfer': bool/str - Flag indicating if it's a transfer.
-            - 'Notes': str - Additional notes or memo.
-            
-            Additional fields may be included but are not guaranteed to be processed
-            by all consumers.
+            A list of Transaction objects.
         """
         pass
 
-    def save_transactions(self, transactions: List[Dict[str, Any]]):
+    def save_transactions(self, transactions: List[Transaction]):
         """Save transactions to CSV."""
-        # This can be overridden or used as is with the CSVWriter
         from .utils import CSVWriter
         writer = CSVWriter(self.config.output_dir / self.get_bank_name())
         
-        # Group by month or save as one file? 
-        # Requirement says "Ensure Output CSV requirements".
-        # Existing scripts group by month. Let's keep that pattern.
+        # Convert Transactions to dicts
+        txn_dicts = [t.to_csv_row() for t in transactions]
         
         by_month = {}
-        for txn in transactions:
+        for txn in txn_dicts:
             # Assuming 'Date' is YYYY-MM-DD
             date = txn.get('Date', '')
             if len(date) >= 7:
@@ -140,7 +134,76 @@ class BankDownloader(ABC):
                 by_month[month].append(txn)
         
         for month, txns in by_month.items():
-            writer.write(txns, f"{month}.csv")
+            writer.write(txns, f"{month}.csv", fieldnames=Transaction.CSV_FIELDS)
+            
+        # Ensure accounts exist
+        self.ensure_accounts_exist(transactions)
+
+    def ensure_accounts_exist(self, transactions: List[Transaction]):
+        """Ensure all accounts in transactions exist in accounts.csv."""
+        accounts_file = self.config.output_dir / self.get_bank_name() / "accounts.csv"
+        
+        known_ids = set()
+        if accounts_file.exists():
+            import csv
+            try:
+                with open(accounts_file, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        known_ids.add(row.get('Unique Account ID'))
+            except Exception:
+                pass
+        
+        new_accounts = {}
+        for txn in transactions:
+            acc_id = txn.unique_account_id
+            if acc_id and acc_id not in known_ids and acc_id not in new_accounts:
+                # Create minimal Account
+                acc = Account({}, acc_id)
+                acc.account_name = txn.account_name
+                acc.currency = txn.currency
+                # Try to extract account number from raw data if available (common pattern)
+                if 'Account Number' in txn.raw_data:
+                     acc.account_number = str(txn.raw_data['Account Number'])
+                
+                new_accounts[acc_id] = acc
+        
+        if new_accounts:
+            print(f"Found {len(new_accounts)} new account(s) from transactions. Updating accounts.csv...")
+            self._append_accounts_to_csv(list(new_accounts.values()))
+
+    def _append_accounts_to_csv(self, new_accounts: List[Account]):
+        """Append new accounts to the accounts file."""
+        import csv
+        accounts_file = self.config.output_dir / self.get_bank_name() / "accounts.csv"
+        
+        # Ensure directory exists
+        accounts_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        rows = [acc.to_csv_row() for acc in new_accounts]
+        
+        # If file doesn't exist, we need to write header
+        file_exists = accounts_file.exists()
+        
+        fieldnames = ['Unique Account ID', 'Account Name', 'Account Number', 'Currency', 'Type', 'Status', 'Created At']
+        
+        try:
+            with open(accounts_file, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                if not file_exists:
+                    writer.writeheader()
+                writer.writerows(rows)
+            print(f"Appended {len(rows)} new account(s) to {accounts_file}")
+        except Exception as e:
+            print(f"Error appending accounts to CSV: {e}")
+
+    def save_accounts(self, accounts: List[Account]):
+        """Save accounts to CSV."""
+        from .utils import CSVWriter
+        writer = CSVWriter(self.config.output_dir / self.get_bank_name())
+        
+        account_dicts = [a.to_csv_row() for a in accounts]
+        writer.write(account_dicts, "accounts.csv", fieldnames=Account.CSV_FIELDS)
 
     def teardown(self):
         """Close browser context."""

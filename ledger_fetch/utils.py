@@ -152,56 +152,42 @@ class CSVWriter:
     transaction dictionaries to CSV files, ensuring that all required fields
     are present and properly ordered.
     
-    The output CSV will always contain the following columns (in order):
-    1. Unique Transaction ID
-    2. Unique Account ID
-    3. Account Name
-    4. Date
-    5. Description
-    6. Payee
-    7. Payee Name
-    8. Amount
-    9. Currency
-    10. Category
-    11. Is Transfer
-    12. Notes
-    
     Any additional keys in the transaction dictionaries will be appended as
     extra columns.
     """
-    
-    REQUIRED_FIELDS = [
-        'Unique Transaction ID',
-        'Unique Account ID',
-        'Account Name',
-        'Date',
-        'Description',
-        'Payee',
-        'Payee Name',
-        'Amount',
-        'Currency',
-        'Category',
-        'Is Transfer',
-        'Notes'
-    ]
     
     def __init__(self, output_dir: Path):
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def write(self, transactions: List[Dict[str, Any]], filename: str):
-        """Write transactions to a CSV file."""
+    def write(self, transactions: List[Dict[str, Any]], filename: str, fieldnames: List[str] = None):
+        """
+        Write transactions (or any dicts) to a CSV file.
+        
+        Args:
+            transactions: List of dictionaries to write.
+            filename: Name of the output file.
+            fieldnames: Optional list of field names to enforce order and presence.
+                        If provided, these fields will come first.
+                        Any extra fields found in the data will be appended.
+        """
         if not transactions:
             return
 
         filepath = self.output_dir / filename
         
-        # Collect all fields, ensuring required ones are first
+        # Collect all fields present in the data
         all_keys = set().union(*(d.keys() for d in transactions))
-        fieldnames = self.REQUIRED_FIELDS + [k for k in all_keys if k not in self.REQUIRED_FIELDS]
+        
+        if fieldnames:
+             # Use provided fieldnames + any extra keys found in data
+             final_fieldnames = list(fieldnames) + [k for k in all_keys if k not in fieldnames]
+        else:
+             # Just sort them for stability
+             final_fieldnames = sorted(list(all_keys))
         
         with open(filepath, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer = csv.DictWriter(f, fieldnames=final_fieldnames)
             writer.writeheader()
             writer.writerows(transactions)
         

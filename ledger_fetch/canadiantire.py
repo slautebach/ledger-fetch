@@ -4,7 +4,9 @@ import uuid
 from datetime import datetime
 from typing import List, Dict, Any
 from .base import BankDownloader
+from .base import BankDownloader
 from .utils import TransactionNormalizer
+from .models import Transaction, Account
 
 class CanadianTireDownloader(BankDownloader):
     """
@@ -52,32 +54,11 @@ class CanadianTireDownloader(BankDownloader):
         except Exception as e:
             print(f"Warning: Could not auto-navigate (might be already there): {e}")
 
-    def download_transactions(self) -> List[Dict[str, Any]]:
-        """Fetch transactions via API."""
-        
-        # 1. Capture transient reference
-        transient_ref = self._get_transient_reference()
-        
-        # 2. Get statement dates
-        statement_dates = self._get_statement_dates()
-        if not statement_dates:
-            print("No statement dates found.")
-            return []
-            
-        print(f"Fetching transactions for {len(statement_dates)} statement(s)...")
-        
-        all_transactions = []
-        for date in statement_dates:
-            txns = self._fetch_transactions_for_statement(date, transient_ref)
-            all_transactions.extend(txns)
-            time.sleep(1)
-            
-        return all_transactions
-
-    def _get_transient_reference(self):
-        """Get transient reference from profile API."""
-        print("Fetching transient reference from profile...")
+    def fetch_accounts(self) -> List[Account]:
+        """Fetch accounts from profile API."""
+        print("Fetching profile to get accounts...")
         api_url = "https://www.ctfs.com/bank/v1/profile/retrieveProfile"
+        accounts = []
         
         try:
             result = self.page.evaluate("""
@@ -120,35 +101,83 @@ class CanadianTireDownloader(BankDownloader):
 
             if "error" in result:
                 print(f"Profile fetch error: {result['error']}")
+                return []
             elif not result.get("ok"):
                 print(f"Profile API error: {result.get('status')}")
-                print(f"Response text: {result.get('text')[:200]}...") # Log first 200 chars
+                return []
             else:
                 text = result.get("text", "{}")
                 try:
                     json_response = json.loads(text)
+                    cards = json_response.get("registeredCards", [])
+                    for card in cards:
+                        # Extract info
+                        ref = card.get("transientReference")
+                        display_name = card.get("displayName", "Canadian Tire Options Mastercard")
+                        last_4 = card.get("last4Digits", "")
+                        
+                        if not ref: continue
+                        
+                        unique_id = f"CTFS-{last_4}" if last_4 else f"CTFS-{uuid.uuid4()}"
+                        
+                        acc = Account(card, unique_id)
+                        acc.account_name = display_name
+                        acc.account_number = last_4
+                        acc.type = "Credit Card"
+                        acc.currency = "CAD"
+                        
+                        accounts.append(acc)
+                        
                 except json.JSONDecodeError as e:
                     print(f"Error parsing profile JSON: {e}")
-                    print(f"Raw response text: {text[:500]}...") # Log raw text
-                    return str(uuid.uuid4())
-
-                # Extract transientReference from registeredCards
-                cards = json_response.get("registeredCards", [])
-                if cards and len(cards) > 0:
-                    ref = cards[0].get("transientReference")
-                    if ref:
-                        print(f"Found transient reference: {ref}")
-                        return ref
-                else:
-                    print("No registered cards found in profile.")
-                    # Debug: print keys
-                    print(f"Profile keys: {list(json_response.keys())}")
-
+                    
         except Exception as e:
-            print(f"Error getting transient reference: {e}")
+            print(f"Error fetching accounts: {e}")
+            
+        return accounts
+
+    def download_transactions(self) -> List[Transaction]:
+        """Fetch transactions via API."""
         
-        print("Warning: No transient reference found, using generated UUID")
-        return str(uuid.uuid4())
+        # 1. Fetch Accounts
+        accounts = self.fetch_accounts()
+        if not accounts:
+            print("No accounts found.")
+            # Fallback to legacy single-ref method if needed? 
+            # But fetch_accounts implements the same logic.
+            return []
+            
+        self.save_accounts(accounts)
+        
+        # 2. Get statement dates (Assuming global/current context)
+        statement_dates = self._get_statement_dates()
+        if not statement_dates:
+            print("No statement dates found.")
+            return []
+            
+        print(f"Fetching transactions for {len(statement_dates)} statement(s)...")
+        
+        all_transactions = []
+        
+        # For now, we only process the first account because statement_dates might be tied to UI context
+        # and we don't know how to switch accounts yet.
+        # But we pass the account object to _fetch_transactions_for_statement
+        target_account = accounts[0]
+        print(f"Processing account: {target_account.account_name} ({target_account.unique_account_id})")
+        
+        transient_ref = target_account.raw_data.get("transientReference")
+        if not transient_ref:
+            print("No transient reference for account.")
+            return []
+
+        for date in statement_dates:
+            txns = self._fetch_transactions_for_statement(date, transient_ref, target_account)
+            all_transactions.extend(txns)
+            time.sleep(1)
+            
+        return all_transactions
+
+
 
     def _get_statement_dates(self):
         """Extract available statement dates."""
@@ -168,7 +197,7 @@ class CanadianTireDownloader(BankDownloader):
             print(f"Could not extract statement dates: {e}")
             return []
 
-    def _fetch_transactions_for_statement(self, statement_date, transient_ref):
+    def _fetch_transactions_for_statement(self, statement_date, transient_ref, account: Account) -> List[Transaction]:
         """Fetch transactions for a specific date."""
         api_url = "https://www.ctfs.com/dash/v1/account/retrieveTransactions"
         print(f"Fetching transactions for {statement_date}")
@@ -234,27 +263,27 @@ class CanadianTireDownloader(BankDownloader):
                 return []
                 
             json_response = json.loads(result.get("text", "{}"))
-            return self._parse_transaction_response(json_response)
+            return self._parse_transaction_response(json_response, account)
             
         except Exception as e:
             print(f"Error fetching transactions: {e}")
             return []
 
-    def _parse_transaction_response(self, json_data):
+    def _parse_transaction_response(self, json_data, account: Account) -> List[Transaction]:
         """Parse API response."""
         transactions = []
         if 'transactions' not in json_data:
             return transactions
             
-        for txn in json_data['transactions']:
-            tran_date = txn.get('tranDate', '')
+        for txn_data in json_data['transactions']:
+            tran_date = txn_data.get('tranDate', '')
             date = TransactionNormalizer.normalize_date(tran_date)
             
-            merchant = txn.get('merchant', '')
+            merchant = txn_data.get('merchant', '')
             description = TransactionNormalizer.clean_description(merchant)
             
-            amount_val = float(txn.get('amount', 0))
-            trans_type = txn.get('type', '')
+            amount_val = float(txn_data.get('amount', 0))
+            trans_type = txn_data.get('type', '')
             
             # Signed amount
             if trans_type == 'PURCHASE':
@@ -263,29 +292,27 @@ class CanadianTireDownloader(BankDownloader):
                 amount = amount_val
                 
             # IDs
-            ref_num = txn.get('referenceNumber', '')
+            ref_num = txn_data.get('referenceNumber', '')
             unique_trans_id = ref_num if ref_num else TransactionNormalizer.generate_transaction_id(date, amount, description, "CTFS")
             
             # Determine if transfer (Payment)
             is_transfer = trans_type == 'PAYMENT'
 
-            payee = TransactionNormalizer.normalize_payee(description)
+            payee_name = TransactionNormalizer.normalize_payee(description)
 
-            transaction = {
-                'Unique Transaction ID': unique_trans_id,
-                'Unique Account ID': "CTFS",
-                'Account Name': "Canadian Tire Options Mastercard",
-                'Date': date,
-                'Description': description,
-                'Payee': payee,
-                'Payee Name': payee,
-                'Amount': amount,
-                'Currency': 'CAD',
-                'Category': '',
-                'Is Transfer': is_transfer,
-                'Notes': f"Type: {trans_type}, Ref: {ref_num}"
-            }
+            # Create Transaction
+            txn = Transaction(txn_data, account.unique_account_id)
+            txn.unique_transaction_id = unique_trans_id
+            txn.account_name = account.account_name
+            txn.date = date
+            txn.description = description
+            txn.payee = description # Original (cleaned) description
+            txn.payee_name = payee_name # Normalized payee
+            txn.amount = amount
+            txn.currency = 'CAD'
+            txn.is_transfer = is_transfer
+            txn.notes = f"Type: {trans_type}, Ref: {ref_num}"
             
-            transactions.append(transaction)
+            transactions.append(txn)
             
         return transactions

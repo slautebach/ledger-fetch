@@ -1,0 +1,261 @@
+from typing import Dict, Any, Union, List
+from abc import ABC, abstractmethod
+
+class BaseModel(ABC):
+    def __init__(self, raw_data: Dict[str, Any]):
+        self.raw_data = raw_data
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.raw_data.get(key, default)
+
+    def set(self, key: str, value: Any):
+        self.raw_data[key] = value
+
+    def _flatten_raw_data(self) -> Dict[str, Any]:
+        """
+        Flattens the raw_data dictionary using dot notation for nested keys.
+        """
+        out = {}
+        def flatten(x, name=''):
+            if type(x) is dict:
+                for a in x:
+                    flatten(x[a], name + a + '.')
+            else:
+                out[name[:-1]] = x
+        flatten(self.raw_data)
+        return out
+
+    @abstractmethod
+    def get_required_csv_row(self) -> Dict[str, Any]:
+        """
+        Returns a dictionary of the required CSV fields and their values.
+        """
+        pass
+
+    def to_csv_row(self) -> Dict[str, Any]:
+        """
+        Serializes the model to a CSV row dictionary.
+        Merges required fields with flattened raw data.
+        """
+        row = self.get_required_csv_row()
+        
+        # Add flattened raw data
+        flat_raw = self._flatten_raw_data()
+        row.update(flat_raw)
+        
+        return row
+
+class Transaction(BaseModel):
+    CSV_FIELDS = [
+        'Unique Transaction ID',
+        'Unique Account ID',
+        'Account Name',
+        'Date',
+        'Description',
+        'Payee',
+        'Payee Name',
+        'Amount',
+        'Currency',
+        'Category',
+        'Is Transfer',
+        'Notes'
+    ]
+
+    def __init__(self, raw_data: Dict[str, Any], unique_account_id: str):
+        super().__init__(raw_data)
+        # Ensure Unique Account ID is set in raw_data
+        self.unique_account_id = unique_account_id
+
+    @property
+    def unique_transaction_id(self) -> str:
+        return self.get('Unique Transaction ID', '')
+
+    @unique_transaction_id.setter
+    def unique_transaction_id(self, value: str):
+        self.set('Unique Transaction ID', value)
+
+    @property
+    def unique_account_id(self) -> str:
+        return self.get('Unique Account ID', '')
+
+    @unique_account_id.setter
+    def unique_account_id(self, value: str):
+        self.set('Unique Account ID', value)
+
+    @property
+    def account_name(self) -> str:
+        return self.get('Account Name', '')
+
+    @account_name.setter
+    def account_name(self, value: str):
+        self.set('Account Name', value)
+
+    @property
+    def date(self) -> str:
+        return self.get('Date', '')
+
+    @date.setter
+    def date(self, value: str):
+        self.set('Date', value)
+
+    @property
+    def description(self) -> str:
+        return self.get('Description', '')
+
+    @description.setter
+    def description(self, value: str):
+        self.set('Description', value)
+
+    @property
+    def payee(self) -> str:
+        return self.get('Payee', '')
+
+    @payee.setter
+    def payee(self, value: str):
+        self.set('Payee', value)
+
+    @property
+    def payee_name(self) -> str:
+        return self.get('Payee Name', '')
+
+    @payee_name.setter
+    def payee_name(self, value: str):
+        self.set('Payee Name', value)
+
+    @property
+    def amount(self) -> float:
+        return self.get('Amount', 0.0)
+
+    @amount.setter
+    def amount(self, value: float):
+        self.set('Amount', value)
+
+    @property
+    def currency(self) -> str:
+        return self.get('Currency', '')
+
+    @currency.setter
+    def currency(self, value: str):
+        self.set('Currency', value)
+
+    @property
+    def category(self) -> str:
+        return self.get('Category', '')
+
+    @category.setter
+    def category(self, value: str):
+        self.set('Category', value)
+
+    @property
+    def is_transfer(self) -> Union[bool, str]:
+        return self.get('Is Transfer', False)
+
+    @is_transfer.setter
+    def is_transfer(self, value: Union[bool, str]):
+        self.set('Is Transfer', value)
+
+    @property
+    def notes(self) -> str:
+        return self.get('Notes', '')
+
+    @notes.setter
+    def notes(self, value: str):
+        self.set('Notes', value)
+
+    def get_required_csv_row(self) -> Dict[str, Any]:
+        return {
+            'Unique Transaction ID': self.unique_transaction_id,
+            'Unique Account ID': self.unique_account_id,
+            'Account Name': self.account_name,
+            'Date': self.date,
+            'Description': self.description,
+            'Payee': self.payee,
+            'Payee Name': self.payee_name,
+            'Amount': self.amount,
+            'Currency': self.currency,
+            'Category': self.category,
+            'Is Transfer': self.is_transfer,
+            'Notes': self.notes,
+        }
+
+class Account(BaseModel):
+    CSV_FIELDS = [
+        'Unique Account ID',
+        'Account Name',
+        'Account Number',
+        'Currency',
+        'Type',
+        'Status',
+        'Created At'
+    ]
+
+    def __init__(self, raw_data: Dict[str, Any], unique_account_id: str):
+        super().__init__(raw_data)
+        self.unique_account_id = unique_account_id
+
+    @property
+    def unique_account_id(self) -> str:
+        return self.get('Unique Account ID', '')
+
+    @unique_account_id.setter
+    def unique_account_id(self, value: str):
+        self.set('Unique Account ID', value)
+
+    @property
+    def account_name(self) -> str:
+        return self.get('Account Name', '')
+
+    @account_name.setter
+    def account_name(self, value: str):
+        self.set('Account Name', value)
+
+    @property
+    def account_number(self) -> str:
+        return self.get('Account Number', '')
+
+    @account_number.setter
+    def account_number(self, value: str):
+        self.set('Account Number', value)
+
+    @property
+    def currency(self) -> str:
+        return self.get('Currency', '')
+
+    @currency.setter
+    def currency(self, value: str):
+        self.set('Currency', value)
+
+    @property
+    def type(self) -> str:
+        return self.get('Type', '')
+
+    @type.setter
+    def type(self, value: str):
+        self.set('Type', value)
+
+    @property
+    def status(self) -> str:
+        return self.get('Status', '')
+
+    @status.setter
+    def status(self, value: str):
+        self.set('Status', value)
+
+    @property
+    def created_at(self) -> str:
+        return self.get('Created At', '')
+
+    @created_at.setter
+    def created_at(self, value: str):
+        self.set('Created At', value)
+
+    def get_required_csv_row(self) -> Dict[str, Any]:
+        return {
+            'Unique Account ID': self.unique_account_id,
+            'Account Name': self.account_name,
+            'Account Number': self.account_number,
+            'Currency': self.currency,
+            'Type': self.type,
+            'Status': self.status,
+            'Created At': self.created_at
+        }

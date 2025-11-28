@@ -3,7 +3,9 @@ import json
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from .base import BankDownloader
+from .base import BankDownloader
 from .utils import TransactionNormalizer
+from .models import Transaction, Account
 
 
 class BMODownloader(BankDownloader):
@@ -63,28 +65,49 @@ class BMODownloader(BankDownloader):
         except Exception as e:
             print(f"Could not navigate to accounts page: {e}")
 
-    def download_transactions(self) -> List[Dict[str, Any]]:
+    def fetch_accounts(self) -> List[Account]:
+        """Fetch accounts from the accounts list page."""
+        print("Finding credit card accounts...")
+        accounts = []
+        
+        # Reuse the scraping logic
+        account_dicts = self._get_credit_card_accounts()
+        
+        for acc_dict in account_dicts:
+            name = acc_dict['name']
+            number = acc_dict['number']
+            
+            # Generate ID
+            # BMO-{last 4}
+            unique_id = f"BMO-{number[-4:]}" if len(number) >= 4 else f"BMO-{number}"
+            
+            acc = Account(acc_dict, unique_id)
+            acc.account_name = name
+            acc.account_number = number
+            acc.type = "Credit Card"
+            acc.currency = "CAD" # Assumption
+            
+            accounts.append(acc)
+            
+        return accounts
+
+    def download_transactions(self) -> List[Transaction]:
         """Fetch transactions for all credit card accounts."""
         
-        print("Finding credit card accounts...")
+        accounts = self.fetch_accounts()
         
-        # Get all credit card account links
-        account_links = self._get_credit_card_accounts()
-        
-        if not account_links:
+        if not accounts:
             print("No credit card accounts found.")
             return []
         
-        print(f"Found {len(account_links)} credit card account(s)")
+        self.save_accounts(accounts)
+        print(f"Found {len(accounts)} credit card account(s)")
         
         all_transactions = []
         
         # Process each account
-        for idx, account_info in enumerate(account_links, 1):
-            account_name = account_info['name']
-            account_number = account_info['number']
-            
-            print(f"\n[{idx}/{len(account_links)}] Processing: {account_name} ({account_number})")
+        for idx, account in enumerate(accounts, 1):
+            print(f"\n[{idx}/{len(accounts)}] Processing: {account.account_name} ({account.account_number})")
             
             try:
                 # Click on the account to open it
@@ -115,7 +138,7 @@ class BMODownloader(BankDownloader):
                 to_date_str = current_date.strftime("%Y-%m-%d")
                 
                 print(f"  Fetching {current_year}: {from_date_str} to {to_date_str}...")
-                transactions_current = self._fetch_transactions_from_api(from_date_str, to_date_str)
+                transactions_current = self._fetch_transactions_from_api(from_date_str, to_date_str, account)
                 all_account_transactions.extend(transactions_current)
                 time.sleep(1)
                 
@@ -125,7 +148,7 @@ class BMODownloader(BankDownloader):
                 to_date_str = f"{prev_year}-12-31"
                 
                 print(f"  Fetching {prev_year}: {from_date_str} to {to_date_str}...")
-                transactions_prev = self._fetch_transactions_from_api(from_date_str, to_date_str)
+                transactions_prev = self._fetch_transactions_from_api(from_date_str, to_date_str, account)
                 all_account_transactions.extend(transactions_prev)
                 
                 print(f"  Total transactions for this account: {len(all_account_transactions)}")
@@ -140,22 +163,16 @@ class BMODownloader(BankDownloader):
                 print("="*60)
                 input("Press Enter when ready to continue...")
                 
-                # Add account info to each transaction
-                for txn in all_account_transactions:
-                    txn['Account Name'] = account_name
-                    if 'Unique Account ID' not in txn or txn['Unique Account ID'] == 'BMO':
-                        txn['Unique Account ID'] = f"BMO-{account_number}"
-                
                 all_transactions.extend(all_account_transactions)
                 
                 # Navigate back to accounts list for next account
-                if idx < len(account_links):
+                if idx < len(accounts):
                     print("Returning to accounts list...")
                     self.page.goto("https://www1.bmo.com/banking/digital/accounts", wait_until="networkidle")
                     time.sleep(2)
                     
             except Exception as e:
-                print(f"Error processing account {account_name}: {e}")
+                print(f"Error processing account {account.account_name}: {e}")
                 import traceback
                 traceback.print_exc()
                 # Try to return to accounts list
@@ -255,12 +272,13 @@ class BMODownloader(BankDownloader):
         except Exception as e:
             print(f"Error clicking account: {e}")
 
-    def _fetch_transactions_from_api(self, from_date: str, to_date: str) -> List[Dict[str, Any]]:
+    def _fetch_transactions_from_api(self, from_date: str, to_date: str, account: Account) -> List[Transaction]:
         """Fetch transactions from BMO REST API.
         
         Args:
             from_date: Start date in YYYY-MM-DD format
             to_date: End date in YYYY-MM-DD format
+            account: The account object
         """
         
         api_url = "https://www1.bmo.com/api/cdb/utility/cache/transient-extended-credit-card-data/get"
@@ -375,7 +393,7 @@ class BMODownloader(BankDownloader):
                 return []
                 
             json_response = json.loads(result.get("text", "{}"))
-            return self._parse_transaction_response(json_response)
+            return self._parse_transaction_response(json_response, account)
             
         except Exception as e:
             print(f"Error fetching transactions: {e}")
@@ -383,44 +401,34 @@ class BMODownloader(BankDownloader):
             traceback.print_exc()
             return []
 
-    def _parse_transaction_response(self, json_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _parse_transaction_response(self, json_data: Dict[str, Any], account: Account) -> List[Transaction]:
         """Parse BMO API JSON response and normalize to standard format.
         
         Args:
             json_data: Raw JSON response from BMO API
+            account: The account object
             
         Returns:
-            List of normalized transaction dictionaries
+            List of normalized transaction objects
         """
         transactions = []
-        
-        # Extract account number for unique account ID
-        account_number = "BMO"  # Default
-        try:
-            account_detail = json_data.get('accountDetails', {}).get('accountDetail', {})
-            account_number = account_detail.get('accountNumber', 'BMO')
-            # Use last 4 digits for privacy
-            if len(account_number) > 4:
-                account_number = f"BMO-{account_number[-4:]}"
-        except Exception:
-            pass
         
         # Get posted transactions
         posted_txns = json_data.get('postedTransactions', {}).get('transactions', [])
         
         print(f"Found {len(posted_txns)} posted transactions")
         
-        for txn in posted_txns:
+        for txn_data in posted_txns:
             # Extract fields
-            txn_date = txn.get('txnDate', '')  # Transaction date (YYYY-MM-DD)
-            post_date = txn.get('postDate', '')  # Posted date (YYYY-MM-DD)
-            description = txn.get('descr', '')
-            merchant_name = txn.get('merchantName', '')
-            amount_val = float(txn.get('amount', 0))
-            txn_indicator = txn.get('txnIndicator', 'DR')  # DR = Debit, CR = Credit
-            txn_id = txn.get('transactionId', '')
-            txn_ref = txn.get('txnRefNumber', '')
-            txn_code = txn.get('txnCode', '')
+            txn_date = txn_data.get('txnDate', '')  # Transaction date (YYYY-MM-DD)
+            post_date = txn_data.get('postDate', '')  # Posted date (YYYY-MM-DD)
+            description = txn_data.get('descr', '')
+            merchant_name = txn_data.get('merchantName', '')
+            amount_val = float(txn_data.get('amount', 0))
+            txn_indicator = txn_data.get('txnIndicator', 'DR')  # DR = Debit, CR = Credit
+            txn_id = txn_data.get('transactionId', '')
+            txn_ref = txn_data.get('txnRefNumber', '')
+            txn_code = txn_data.get('txnCode', '')
             
             # Use posted date as the primary date (when it cleared)
             date = TransactionNormalizer.normalize_date(post_date if post_date else txn_date)
@@ -428,7 +436,7 @@ class BMODownloader(BankDownloader):
             # Clean description
             description = TransactionNormalizer.clean_description(description)
             
-            payee = TransactionNormalizer.normalize_payee(description)
+            payee_name = TransactionNormalizer.normalize_payee(description)
 
             # Determine signed amount
             # DR (Debit) = money spent (negative)
@@ -440,30 +448,29 @@ class BMODownloader(BankDownloader):
             
             # Use BMO's transaction ID, or generate one if missing
             unique_id = txn_id if txn_id else TransactionNormalizer.generate_transaction_id(
-                date, amount, description, account_number
+                date, amount, description, account.unique_account_id
             )
             
-            # Build standardized transaction
-            transaction = {
-                'Unique Account ID': account_number,
-                'Unique Transaction ID': unique_id,
-                'Date': date,
-                'Description': description,
-                'Payee': payee,
-                'Payee Name': payee,
-                'Amount': amount,
-                'Currency': 'CAD',
-                'Category': '',
-                # BMO-specific fields
-                'Transaction Date': txn_date,
-                'Post Date': post_date,
-                'Merchant Name': merchant_name,
-                'Transaction Indicator': txn_indicator,
-                'Transaction Code': txn_code,
-                'Reference Number': txn_ref,
-            }
+            # Create Transaction
+            txn = Transaction(txn_data, account.unique_account_id)
+            txn.unique_transaction_id = unique_id
+            txn.account_name = account.account_name
+            txn.date = date
+            txn.description = description
+            txn.payee = description # Original (cleaned) description
+            txn.payee_name = payee_name # Normalized payee
+            txn.amount = amount
+            txn.currency = 'CAD'
             
-            transactions.append(transaction)
+            # BMO-specific fields in raw_data (already passed in constructor, but we can add more if needed)
+            txn.raw_data['Transaction Date'] = txn_date
+            txn.raw_data['Post Date'] = post_date
+            txn.raw_data['Merchant Name'] = merchant_name
+            txn.raw_data['Transaction Indicator'] = txn_indicator
+            txn.raw_data['Transaction Code'] = txn_code
+            txn.raw_data['Reference Number'] = txn_ref
+            
+            transactions.append(txn)
         
         # Also get pending transactions if any
         pending_txns = json_data.get('pendingTransactions', {}).get('transactions', [])

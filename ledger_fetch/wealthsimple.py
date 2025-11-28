@@ -7,6 +7,8 @@ from datetime import datetime
 from typing import List, Dict, Any
 from .base import BankDownloader
 from .utils import TransactionNormalizer
+from .models import Transaction, Account
+from .config import settings
 
 # Try to import ws_api, handle if missing
 try:
@@ -51,29 +53,15 @@ class WealthsimpleDownloader(BankDownloader):
     def get_bank_name(self) -> str:
         return "wealthsimple"
 
-    def login(self):
-        """Navigate to login page and wait for manual login."""
-        if not WealthsimpleAPI:
-            raise ImportError("ws-api library is required for Wealthsimple downloader.")
+    def __init__(self, config=settings):
+        super().__init__(config)
+        self.ws = None
 
-        print("Navigating to Wealthsimple login page...")
-        self.page.goto("https://my.wealthsimple.com/app/login")
-        
-        print("Waiting for user to ensure logged in...")
-        # Wait for a specific element that indicates login success
-        # The dashboard usually has "Total value" or similar.
-        try:
-            self.page.wait_for_url("**/app/home**", timeout=300000) # 5 min timeout
-            print("Login detected.")
-        except Exception:
-             print("Warning: Login timeout or URL not matched. Proceeding anyway.")
+    def _initialize_api(self):
+        """Initialize the Wealthsimple API client."""
+        if self.ws:
+            return
 
-    def navigate_to_transactions(self):
-        """Not needed for Wealthsimple as we use API."""
-        pass
-
-    def download_transactions(self) -> List[Dict[str, Any]]:
-        """Fetch transactions via API."""
         print("Extracting tokens from browser session...")
         
         # Get OAuth token from cookies
@@ -125,69 +113,59 @@ class WealthsimpleDownloader(BankDownloader):
         self._setup_monkey_patch()
         
         # Initialize API
-        ws = WealthsimpleAPI(session)
-        
-        # Fetch accounts
-        print("Fetching accounts...")
-        accounts = ws.get_accounts()
-        print(f"Found {len(accounts)} accounts.")
-        
-        # Export accounts to CSV
-        if accounts:
-            import csv
-            accounts_file = self.config.output_dir / self.get_bank_name() / "accounts.csv"
-            self.config.output_dir.mkdir(parents=True, exist_ok=True)
-            (self.config.output_dir / self.get_bank_name()).mkdir(parents=True, exist_ok=True)
-            
-            # Define columns
-            fieldnames = [
-                'Unique Account ID', 'Account Name', 'Account Number', 'Currency', 
-                'Status', 'Type', 'Unified Type', 'Net Value', 'Net Deposits', 'Created At'
-            ]
-            
-            clean_accounts = []
-            for acc in accounts:
-                # Extract nested financials safely
-                financials = acc.get('financials', {})
-                current_combined = financials.get('currentCombined', {})
-                net_liquidation = current_combined.get('netLiquidationValue', {})
-                net_deposits = current_combined.get('netDeposits', {})
-                
-                # Extract custodian account number (usually the first one)
-                custodian_accounts = acc.get('custodianAccounts', [])
-                account_number = ''
-                if custodian_accounts and isinstance(custodian_accounts, list) and len(custodian_accounts) > 0:
-                    account_number = custodian_accounts[0].get('id', '')
+        self.ws = WealthsimpleAPI(session)
 
-                clean_acc = {
-                    'Unique Account ID': acc.get('id'),
-                    'Account Name': acc.get('nickname'),
-                    'Account Number': account_number,
-                    'Currency': acc.get('currency'),
-                    'Status': acc.get('status'),
-                    'Type': acc.get('type'),
-                    'Unified Type': acc.get('unifiedAccountType'),
-                    'Net Value': net_liquidation.get('amount'),
-                    'Net Deposits': net_deposits.get('amount'),
-                    'Created At': acc.get('createdAt')
-                }
-                clean_accounts.append(clean_acc)
+    def fetch_accounts(self) -> List[Account]:
+        """Fetch accounts from Wealthsimple API."""
+        self._initialize_api()
+        
+        print("Fetching accounts...")
+        ws_accounts = self.ws.get_accounts()
+        print(f"Found {len(ws_accounts)} accounts.")
+        
+        accounts = []
+        for acc_data in ws_accounts:
+            # Extract custodian account number (usually the first one)
+            custodian_accounts = acc_data.get('custodianAccounts', [])
+            account_number = ''
+            if custodian_accounts and isinstance(custodian_accounts, list) and len(custodian_accounts) > 0:
+                account_number = custodian_accounts[0].get('id', '')
+                
+            unique_id = acc_data.get('id')
             
-            with open(accounts_file, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(clean_accounts)
-            print(f"Exported clean account details to {accounts_file}")
+            acc = Account(acc_data, unique_id)
+            acc.account_name = acc_data.get('nickname') or acc_data.get('account_type') or unique_id
+            acc.account_number = account_number
+            acc.currency = acc_data.get('currency')
+            acc.type = acc_data.get('type')
+            
+            # Extra fields
+            acc.raw_data['Status'] = acc_data.get('status')
+            acc.raw_data['Unified Type'] = acc_data.get('unifiedAccountType')
+            acc.raw_data['Net Value'] = acc_data.get('financials', {}).get('currentCombined', {}).get('netLiquidationValue', {}).get('amount')
+            acc.raw_data['Net Deposits'] = acc_data.get('financials', {}).get('currentCombined', {}).get('netDeposits', {}).get('amount')
+            acc.raw_data['Created At'] = acc_data.get('createdAt')
+            
+            accounts.append(acc)
+            
+        return accounts
+
+    def download_transactions(self) -> List[Transaction]:
+        """Fetch transactions via API."""
+        
+        accounts = self.fetch_accounts()
+        if not accounts:
+            return []
+            
+        self.save_accounts(accounts)
         
         all_transactions = []
         
         for account in accounts:
-            account_id = account['id']
-            account_name = account.get('nickname') or account.get('account_type') or account_id
-            print(f"Processing account: {account_name} ({account_id})")
+            print(f"Processing account: {account.account_name} ({account.unique_account_id})")
             
             try:
-                activities = ws.get_activities(account_id)
+                activities = self.ws.get_activities(account.unique_account_id)
                 if isinstance(activities, dict) and 'results' in activities:
                     activities = activities['results']
                 
@@ -197,35 +175,40 @@ class WealthsimpleDownloader(BankDownloader):
                 print(f"  Found {len(activities)} transactions.")
                 
                 for activity in activities:
-                    txn = self._process_activity(activity, account_name, account_id)
+                    txn = self._process_activity(activity, account)
                     all_transactions.append(txn)
                     
             except Exception as e:
-                print(f"  Error fetching transactions for account {account_id}: {e}")
+                print(f"  Error fetching transactions for account {account.unique_account_id}: {e}")
                 
         return all_transactions
-
-    def _process_activity(self, activity, account_name, account_id):
-        """
-        Process a single activity into a transaction dict.
         
-        Raw Activity Fields (Wealthsimple API):
-        - id: str (e.g., "order-...")
-        - canonicalId: str (e.g., "order-...")
-        - occurredAt: str (ISO 8601 date)
-        - date: str (ISO 8601 date, alternative)
-        - created_at: str (ISO 8601 date, alternative)
-        - amount: float or dict (value, currency)
-        - amountSign: str ("positive", "negative")
-        - currency: str (e.g., "CAD")
-        - description: str (Raw description)
-        - primary_action: str (Alternative description)
-        - type: str (e.g., "DEPOSIT", "WITHDRAWAL", "BUY", "SELL", "DIVIDEND", "E_TRANSFER_FUNDING")
-        - category: str (e.g., "transfer", "investment")
-        - assetSymbol: str (e.g., "XEQT")
-        - p2pMessage: str (e-transfer message)
-        - p2pHandle: str
-        - status: str (e.g., "posted")
+    def login(self):
+        """Navigate to login page and wait for manual login."""
+        if not WealthsimpleAPI:
+            raise ImportError("ws-api library is required for Wealthsimple downloader.")
+
+        print("Navigating to Wealthsimple login page...")
+        self.page.goto("https://my.wealthsimple.com/app/login")
+        
+        print("Waiting for user to ensure logged in...")
+        # Wait for a specific element that indicates login success
+        # The dashboard usually has "Total value" or similar.
+        try:
+            self.page.wait_for_url("**/app/home**", timeout=300000) # 5 min timeout
+            print("Login detected.")
+        except Exception:
+             print("Warning: Login timeout or URL not matched. Proceeding anyway.")
+
+    def navigate_to_transactions(self):
+        """Not needed for Wealthsimple as we use API."""
+        pass
+
+
+
+    def _process_activity(self, activity, account: Account) -> Transaction:
+        """
+        Process a single activity into a transaction object.
         """
         # Date
         raw_date = activity.get('occurredAt') or activity.get('date') or activity.get('created_at')
@@ -259,45 +242,38 @@ class WealthsimpleDownloader(BankDownloader):
         # Unique IDs
         # Wealthsimple provides a canonicalId or id
         ws_id = activity.get('canonicalId') or activity.get('id')
-        unique_trans_id = ws_id if ws_id else TransactionNormalizer.generate_transaction_id(date, amount, cleaned_description, account_id)
+        unique_trans_id = ws_id if ws_id else TransactionNormalizer.generate_transaction_id(date, amount, cleaned_description, account.unique_account_id)
         
-        payee = TransactionNormalizer.normalize_payee(cleaned_description)
+        payee_name = TransactionNormalizer.normalize_payee(cleaned_description)
 
         # New Fields Logic
         # Explicitly handling INTERNAL_TRANSFER as per requirements
         is_transfer = trans_type in ['DEPOSIT', 'WITHDRAWAL', 'INTERNAL_TRANSFER', 'E_TRANSFER_FUNDING', 'E_TRANSFER_CASHOUT']
         notes = activity.get('p2pMessage', '')
         
-        txn = {
-            'Unique Account ID': account_id,
-            'Unique Transaction ID': unique_trans_id,
-            'Account Name': account_name,
-            'Date': date,
-            'Description': cleaned_description,
-            'Payee': payee,
-            'Payee Name': payee,
-            'Amount': amount,
-            'Currency': activity.get('amount', {}).get('currency') if isinstance(activity.get('amount'), dict) else activity.get('currency'),
-            'Category': '', # Can implement categorization logic if needed
-            'Is Transfer': is_transfer,
-            'Notes': notes,
-            'Account': account_name,
-            'Asset Symbol': asset_symbol,
-            'Asset Quantity': activity.get('assetQuantity'),
-            'Status': activity.get('status'),
-            'Sub Type': activity.get('subType'),
-            'Fees': activity.get('fees'),
-            'FX Rate': activity.get('fxRate'),
-            'Type': trans_type,
-            'ID': ws_id
-        }
+        # Create Transaction
+        txn = Transaction(activity, account.unique_account_id)
+        txn.unique_transaction_id = unique_trans_id
+        txn.account_name = account.account_name
+        txn.date = date
+        txn.description = cleaned_description
+        txn.payee = cleaned_description # Original (cleaned) description
+        txn.payee_name = payee_name # Normalized payee
+        txn.amount = amount
+        txn.currency = activity.get('amount', {}).get('currency') if isinstance(activity.get('amount'), dict) else activity.get('currency')
+        txn.is_transfer = is_transfer
+        txn.notes = notes
         
-        # Add other fields
-        for k, v in activity.items():
-            if k not in ['amount', 'description', 'primary_action', 'occurredAt', 'date', 'created_at', 'canonicalId', 'id']:
-                if isinstance(v, (str, int, float, bool)) or v is None:
-                     txn[k] = v
-                     
+        # Extra fields
+        txn.raw_data['Asset Symbol'] = asset_symbol
+        txn.raw_data['Asset Quantity'] = activity.get('assetQuantity')
+        txn.raw_data['Status'] = activity.get('status')
+        txn.raw_data['Sub Type'] = activity.get('subType')
+        txn.raw_data['Fees'] = activity.get('fees')
+        txn.raw_data['FX Rate'] = activity.get('fxRate')
+        txn.raw_data['Type'] = trans_type
+        txn.raw_data['ID'] = ws_id
+        
         return txn
 
     def _setup_monkey_patch(self):

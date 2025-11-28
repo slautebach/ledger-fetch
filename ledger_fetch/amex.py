@@ -7,6 +7,7 @@ import pandas as pd
 from typing import List, Dict, Any
 from .base import BankDownloader
 from .utils import TransactionNormalizer
+from .models import Transaction, Account
 
 class AmexDownloader(BankDownloader):
     """
@@ -81,7 +82,7 @@ class AmexDownloader(BankDownloader):
         except Exception:
             print("Warning: Timed out waiting for Statements elements. Script might fail to find buttons.")
 
-    def download_transactions(self) -> List[Dict[str, Any]]:
+    def download_transactions(self) -> List[Transaction]:
         """Download CSVs and parse them."""
         print("Scanning for available statements...")
         
@@ -255,7 +256,7 @@ class AmexDownloader(BankDownloader):
             print(f"  Download error details: {e}")
             return None
 
-    def _parse_amex_csv(self, csv_path: str) -> List[Dict[str, Any]]:
+    def _parse_amex_csv(self, csv_path: str) -> List[Transaction]:
         """Parse Amex CSV."""
         transactions = []
         try:
@@ -281,37 +282,6 @@ class AmexDownloader(BankDownloader):
                 
                 # Amount
                 amount = 0.0
-                # Amex CSV usually has 'Amount' column. 
-                # Positive for payments/credits? Or depends on the export.
-                # Original script says: "Expense = Negative. Payment = Positive."
-                # But wait, original script says: "In parse_amex_csv, we set Amount = -raw_amount."?
-                # No, looking at `categorize_transaction` docstring in original:
-                # "Wait, actually the caller passes the SIGNED amount... In parse_amex_csv, we set Amount = -raw_amount."
-                # But I don't see that logic in the `parse_amex_csv` function I read!
-                # Let me re-read `parse_amex_csv` in `amex_downloader.py`.
-                # It just returns the DF. It doesn't calculate signed amount there.
-                # The `main` function in `amex_downloader.py` doesn't seem to iterate rows and calculate amount either?
-                # Wait, `amex_downloader.py` just exports the DF to CSV. It doesn't seem to normalize the amount in the output CSV?
-                # Ah, `amex_downloader.py` has `categorize_transaction` but it is NOT USED in `parse_amex_csv` or `main`!
-                # It seems the original script was incomplete or I missed something.
-                # `parse_amex_csv` returns a DF. `main` concats them and saves.
-                # So the output CSVs from `amex_downloader.py` are just raw Amex exports (plus Month column).
-                # Amex raw exports usually have positive amounts for everything.
-                # If I want to normalize, I should apply logic.
-                # Usually: Amount column.
-                # If it's a payment, it might be negative or have a CR marker?
-                # Let's look at `categorize_transaction` again. It has logic for "Payment patterns".
-                # But since it wasn't used, the previous output was likely raw.
-                # Requirement: "Ensure Output CSV requirements... Unique Account ID...".
-                # I should try to make it signed if possible.
-                # Standard Amex CSV: 'Amount'.
-                # Let's assume positive is expense, negative is payment? Or vice versa?
-                # Actually, usually Amex CSVs are positive for charges.
-                # I will stick to raw amount for now, but maybe negate it if it looks like a payment?
-                # Or just keep it as is to match "raw" export style but with normalized columns.
-                # But `TransactionNormalizer` suggests we want a standard format.
-                # Let's assume Amount is the value.
-                
                 raw_amount = row.get('Amount')
                 if not pd.isna(raw_amount):
                     try:
@@ -321,27 +291,21 @@ class AmexDownloader(BankDownloader):
                 # Generate IDs
                 # Amex might have 'Reference'
                 ref = row.get('Reference')
-                unique_trans_id = str(ref) if not pd.isna(ref) else TransactionNormalizer.generate_transaction_id(date, amount, description, "AMEX")
+                unique_account_id = "AMEX" # Placeholder as Amex CSV often lacks account info
+                unique_trans_id = str(ref) if not pd.isna(ref) else TransactionNormalizer.generate_transaction_id(date, amount, description, unique_account_id)
                 
-                payee = TransactionNormalizer.normalize_payee(description)
+                payee_name = TransactionNormalizer.normalize_payee(description)
 
-                txn = {
-                    'Unique Account ID': "AMEX", # Amex CSV doesn't usually have account number
-                    'Unique Transaction ID': unique_trans_id,
-                    'Date': date,
-                    'Description': description,
-                    'Payee': payee,
-                    'Payee Name': payee,
-                    'Amount': amount,
-                    'Currency': 'CAD', # Assumption
-                    'Category': '',
-                }
+                # Create Transaction
+                txn = Transaction(row.to_dict(), unique_account_id)
+                txn.unique_transaction_id = unique_trans_id
+                txn.date = date
+                txn.description = description
+                txn.payee = description # Original (cleaned) description
+                txn.payee_name = payee_name # Normalized payee
+                txn.amount = amount
+                txn.currency = 'CAD' # Assumption
                 
-                # Add other fields
-                for k, v in row.items():
-                    if k not in txn and not pd.isna(v):
-                        txn[k] = v
-                        
                 transactions.append(txn)
                 
         except Exception as e:

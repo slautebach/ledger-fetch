@@ -4,7 +4,9 @@ from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from playwright.sync_api import Request
 from .base import BankDownloader
+from .base import BankDownloader
 from .utils import TransactionNormalizer
+from .models import Transaction, Account
 
 class CIBCDownloader(BankDownloader):
     """
@@ -53,7 +55,7 @@ class CIBCDownloader(BankDownloader):
         """
         pass
 
-    def download_transactions(self) -> List[Dict[str, Any]]:
+    def download_transactions(self) -> List[Transaction]:
         """
         Orchestrate the transaction download process.
         
@@ -94,7 +96,8 @@ class CIBCDownloader(BankDownloader):
         if not captured_auth:
             raise Exception("Could not capture x-auth-token. Cannot proceed.")
 
-        # 2. Scrape Account IDs
+    def fetch_accounts(self) -> List[Account]:
+        """Scrape accounts from the dashboard."""
         print("Scanning for accounts...")
         # Selector based on user provided HTML: a[data-test-id^="account-card-account-name-link-"]
         account_links = self.page.query_selector_all('a[data-test-id^="account-card-account-name-link-"]')
@@ -107,28 +110,68 @@ class CIBCDownloader(BankDownloader):
             if href:
                 parts = href.split('/')
                 acc_id = parts[-1]
-                accounts.append({'id': acc_id, 'name': name, 'href': href})
+                
+                # Create Account object
+                # We don't have account number, just internal ID and name
+                acc = Account({'href': href}, acc_id)
+                acc.account_name = name
+                acc.type = "Credit Card" if "credit-cards" in href else "Bank Account"
+                acc.currency = "CAD" # Assumption
+                
+                accounts.append(acc)
                 print(f"Found account: {name} (ID: {acc_id})")
 
         if not accounts:
             print("No accounts found on dashboard.")
+            
+        return accounts
+
+    def download_transactions(self) -> List[Transaction]:
+        """
+        Orchestrate the transaction download process.
+        """
+        # 1. Capture tokens from any API request on the dashboard
+        print("Capturing session tokens...")
+        captured_auth = {}
+        
+        def handle_request(request: Request):
+            if "api/v1/json" in request.url and not captured_auth:
+                headers = request.headers
+                if 'x-auth-token' in headers:
+                    captured_auth['headers'] = headers
+                    print("Captured session tokens.")
+
+        self.page.on("request", handle_request)
+        
+        # Wait a bit for a request to happen (e.g. balance check)
+        self.page.wait_for_timeout(5000)
+        
+        if not captured_auth:
+            print("No tokens captured yet. Reloading dashboard to trigger requests...")
+            self.page.reload()
+            self.page.wait_for_timeout(5000)
+            
+        if not captured_auth:
+            raise Exception("Could not capture x-auth-token. Cannot proceed.")
+
+        # 2. Fetch Accounts
+        accounts = self.fetch_accounts()
+        if not accounts:
             return []
+            
+        self.save_accounts(accounts)
 
         all_transactions = []
         
         # 3. Iterate and Fetch
         for acc in accounts:
-            print(f"\nProcessing account: {acc['name']}")
+            print(f"\nProcessing account: {acc.account_name}")
             
             # Navigate to account page as requested
-            # The href is relative or absolute? User provided relative in HTML but likely works with base.
-            # We can just construct the full URL or click.
-            # Clicking is safer to ensure SPA state updates.
-            
-            # Find the element again to avoid stale handle
             try:
                 # We can just goto the URL to be faster and reliable
-                target_url = f"https://www.cibconline.cibc.com{acc['href']}"
+                href = acc.raw_data.get('href', '')
+                target_url = f"https://www.cibconline.cibc.com{href}"
                 print(f"Navigating to {target_url}")
                 self.page.goto(target_url)
                 self.page.wait_for_timeout(3000) # Wait for load
@@ -137,130 +180,131 @@ class CIBCDownloader(BankDownloader):
                 continue
 
             # Fetch transactions via API
-            print("Fetching transaction history (past 12 months)...")
+            txns = self._fetch_transactions_for_account(acc, captured_auth)
+            all_transactions.extend(txns)
             
-            today = datetime.now()
-            
-            # Iterate over the past 12 months
-            for i in range(12):
-                # Calculate start and end of the month
-                # Logic: Go back i months. 
-                # Start date: 1st of that month
-                # End date: Last day of that month
-                
-                # Careful with month calculation
-                month_target = today.month - i
-                year_target = today.year
-                
-                while month_target <= 0:
-                    month_target += 12
-                    year_target -= 1
-                
-                start_date_dt = datetime(year_target, month_target, 1)
-                
-                # End date is start of next month minus 1 day
-                if month_target == 12:
-                    next_month = datetime(year_target + 1, 1, 1)
-                else:
-                    next_month = datetime(year_target, month_target + 1, 1)
-                
-                end_date_dt = next_month - timedelta(days=1)
-                
-                # Don't fetch future dates if we are in the current month
-                if end_date_dt > today:
-                    end_date_dt = today
-
-                start_date_str = start_date_dt.strftime('%Y-%m-%d')
-                end_date_str = end_date_dt.strftime('%Y-%m-%d')
-                
-                print(f"  Fetching {start_date_str} to {end_date_str}...")
-
-                api_url = "https://www.cibconline.cibc.com/ebm-ai/api/v1/json/transactions"
-                params = {
-                    "accountId": acc['id'],
-                    "ccTransactionState": "both",
-                    "filterBy": "range",
-                    "fromDate": start_date_str,
-                    "toDate": end_date_str,
-                    "limit": "1000",
-                    "offset": "0",
-                    "sortAsc": "true",
-                    "sortByField": "date"
-                }
-                
-                try:
-                    response = self.context.request.get(
-                        api_url,
-                        params=params,
-                        headers=captured_auth['headers']
-                    )
-                    
-                    if response.ok:
-                        data = response.json()
-                        tx_list = data.get('transactions', [])
-                        if not tx_list and isinstance(data, list):
-                            tx_list = data
-                            
-                        print(f"    Retrieved {len(tx_list)} transactions.")
-                        
-                        for tx in tx_list:
-                            # Normalize
-                            date_str = tx.get('date') or tx.get('transactionDate') or tx.get('postedDate')
-                            
-                            # Amount logic
-                            credit = tx.get('credit')
-                            debit = tx.get('debit')
-                            
-                            if credit is not None:
-                                amount = float(credit)
-                            elif debit is not None:
-                                amount = -abs(float(debit))
-                            else:
-                                amount = float(tx.get('amount') or tx.get('transactionAmount') or 0)
-
-                            desc = tx.get('description') or tx.get('transactionDescription') or tx.get('merchantName')
-                            
-                            normalized_date = TransactionNormalizer.normalize_date(date_str)
-                            clean_desc = TransactionNormalizer.clean_description(desc)
-                            
-                            payee = TransactionNormalizer.normalize_payee(clean_desc)
-
-                            t = {
-                                'Date': normalized_date,
-                                'Description': clean_desc,
-                                'Amount': amount,
-                                'Currency': 'CAD',
-                                'Category': '',
-                                'Unique Account ID': acc['id'],
-                                'Unique Transaction ID': tx.get('id') or TransactionNormalizer.generate_transaction_id(normalized_date, amount, clean_desc, acc['id']),
-                                # Required columns for CSVWriter
-                                'Account Name': acc['name'],
-                                'Payee': payee,
-                                'Payee Name': payee,
-                                'Is Transfer': 'Transfer' in clean_desc or 'Transfer' in (tx.get('transactionType') or ''),
-                                'Notes': '',
-                                # Extra details
-                                'Transaction Type': tx.get('transactionType'),
-                                'Transaction Location': tx.get('transactionLocation'),
-                                'Merchant Category ID': tx.get('merchantCategoryId'),
-                                'FIT ID': tx.get('fitId'),
-                                'Pending': tx.get('pendingIndicator'),
-                                'Description Line 1': tx.get('descriptionLine1'),
-                                'Description Line 2': tx.get('descriptionLine2'),
-                                'Merchant Class Code': tx.get('merchantClassCode'),
-                                'Country Code': tx.get('countryCode')
-                            }
-                            all_transactions.append(t)
-                    else:
-                        print(f"    API Error: {response.status} {response.status_text}")
-                        
-                except Exception as e:
-                    print(f"    Error fetching transactions: {e}")
-                
-                # Small pause between months to be nice
-                time.sleep(0.5)
-                
             # Pause briefly between accounts
             time.sleep(2)
             
         return all_transactions
+
+    def _fetch_transactions_for_account(self, account: Account, captured_auth: Dict[str, Any]) -> List[Transaction]:
+        """Fetch transactions for a specific account using internal API."""
+        print("Fetching transaction history (past 12 months)...")
+        
+        today = datetime.now()
+        transactions = []
+        
+        # Iterate over the past 12 months
+        for i in range(12):
+            # Calculate start and end of the month
+            month_target = today.month - i
+            year_target = today.year
+            
+            while month_target <= 0:
+                month_target += 12
+                year_target -= 1
+            
+            start_date_dt = datetime(year_target, month_target, 1)
+            
+            # End date is start of next month minus 1 day
+            if month_target == 12:
+                next_month = datetime(year_target + 1, 1, 1)
+            else:
+                next_month = datetime(year_target, month_target + 1, 1)
+            
+            end_date_dt = next_month - timedelta(days=1)
+            
+            # Don't fetch future dates if we are in the current month
+            if end_date_dt > today:
+                end_date_dt = today
+
+            start_date_str = start_date_dt.strftime('%Y-%m-%d')
+            end_date_str = end_date_dt.strftime('%Y-%m-%d')
+            
+            print(f"  Fetching {start_date_str} to {end_date_str}...")
+
+            api_url = "https://www.cibconline.cibc.com/ebm-ai/api/v1/json/transactions"
+            params = {
+                "accountId": account.unique_account_id,
+                "ccTransactionState": "both",
+                "filterBy": "range",
+                "fromDate": start_date_str,
+                "toDate": end_date_str,
+                "limit": "1000",
+                "offset": "0",
+                "sortAsc": "true",
+                "sortByField": "date"
+            }
+            
+            try:
+                response = self.context.request.get(
+                    api_url,
+                    params=params,
+                    headers=captured_auth['headers']
+                )
+                
+                if response.ok:
+                    data = response.json()
+                    tx_list = data.get('transactions', [])
+                    if not tx_list and isinstance(data, list):
+                        tx_list = data
+                        
+                    print(f"    Retrieved {len(tx_list)} transactions.")
+                    
+                    for tx in tx_list:
+                        # Normalize
+                        date_str = tx.get('date') or tx.get('transactionDate') or tx.get('postedDate')
+                        
+                        # Amount logic
+                        credit = tx.get('credit')
+                        debit = tx.get('debit')
+                        
+                        if credit is not None:
+                            amount = float(credit)
+                        elif debit is not None:
+                            amount = -abs(float(debit))
+                        else:
+                            amount = float(tx.get('amount') or tx.get('transactionAmount') or 0)
+
+                        desc = tx.get('description') or tx.get('transactionDescription') or tx.get('merchantName')
+                        
+                        normalized_date = TransactionNormalizer.normalize_date(date_str)
+                        clean_desc = TransactionNormalizer.clean_description(desc)
+                        
+                        payee_name = TransactionNormalizer.normalize_payee(clean_desc)
+
+                        # Create Transaction
+                        txn = Transaction(tx, account.unique_account_id)
+                        txn.unique_transaction_id = tx.get('id') or TransactionNormalizer.generate_transaction_id(normalized_date, amount, clean_desc, account.unique_account_id)
+                        txn.account_name = account.account_name
+                        txn.date = normalized_date
+                        txn.description = clean_desc
+                        txn.payee = clean_desc # Original (cleaned) description
+                        txn.payee_name = payee_name # Normalized payee
+                        txn.amount = amount
+                        txn.currency = 'CAD'
+                        txn.is_transfer = 'Transfer' in clean_desc or 'Transfer' in (tx.get('transactionType') or '')
+                        
+                        # Extra details
+                        txn.raw_data['Transaction Type'] = tx.get('transactionType')
+                        txn.raw_data['Transaction Location'] = tx.get('transactionLocation')
+                        txn.raw_data['Merchant Category ID'] = tx.get('merchantCategoryId')
+                        txn.raw_data['FIT ID'] = tx.get('fitId')
+                        txn.raw_data['Pending'] = tx.get('pendingIndicator')
+                        txn.raw_data['Description Line 1'] = tx.get('descriptionLine1')
+                        txn.raw_data['Description Line 2'] = tx.get('descriptionLine2')
+                        txn.raw_data['Merchant Class Code'] = tx.get('merchantClassCode')
+                        txn.raw_data['Country Code'] = tx.get('countryCode')
+                        
+                        transactions.append(txn)
+                else:
+                    print(f"    API Error: {response.status} {response.status_text}")
+                    
+            except Exception as e:
+                print(f"    Error fetching transactions: {e}")
+            
+            # Small pause between months to be nice
+            time.sleep(0.5)
+            
+        return transactions
