@@ -130,14 +130,14 @@ async function main() {
 
   console.log(`Found ${bankDirs.length} bank directories.`);
 
-  // 4. Process Each Bank
+  // 4. Process Accounts (Pass 1)
+  console.log('\n--- Phase 1: Account Creation ---');
   let accountsCache = await api.getAccounts();
 
   for (const bankDir of bankDirs) {
     const bankName = path.basename(bankDir);
-    console.log(`\nProcessing bank: ${bankName}`);
+    console.log(`Checking accounts for bank: ${bankName}`);
 
-    // 4a. Process Accounts
     const accountsFile = path.join(bankDir, 'accounts.csv');
     if (fs.existsSync(accountsFile)) {
       console.log(`  Found accounts.csv. Syncing accounts...`);
@@ -157,26 +157,6 @@ async function main() {
         
         if (!accountId) continue;
 
-        // Check if account exists in Actual (matching by Name for now, as we don't store external ID easily yet)
-        // Ideally we should store the external ID in notes or a custom field if possible, but Name is the standard fallback.
-        // However, the previous logic used 'Unique Account ID' as the name. 
-        // Let's stick to using the 'Unique Account ID' as the name for uniqueness if that's what was intended, 
-        // OR use 'Account Name' if we want it human readable. 
-        // The user's schema has both. 
-        // The previous code used: `const accountId = tx['Unique Account ID']; ... name: accountId`
-        // So it was naming the account with the ID. 
-        // Let's switch to using the human readable name if available, but we need to be careful about duplicates.
-        // Actually, to maintain compatibility and uniqueness, maybe we should stick to ID or check if the user wants human names.
-        // The prompt says "Account Name: str - The human-readable name of the account".
-        // Let's try to find an account by name first.
-        
-        // Strategy: Use 'Unique Account ID' as the source of truth for mapping. 
-        // But Actual accounts have their own IDs. 
-        // We will look for an account where the name matches 'Account Name' OR 'Unique Account ID'.
-        // To be safe and consistent with previous logic, let's look for `Unique Account ID` as the name first? 
-        // No, `Account Name` is better for the user. 
-        // Let's use `Account Name`.
-        
         let actualAccount = accountsCache.find((a: any) => a.name === accountName || a.name === accountId);
 
         if (!actualAccount) {
@@ -202,25 +182,91 @@ async function main() {
             // console.log(`    Account "${accountName}" already exists.`);
         }
       }
-      // Refresh cache after processing accounts.csv
+      
       if (!argv['dry-run']) {
+        // Sync after processing accounts.csv for this bank
+        await api.sync();
+        accountsCache = await api.getAccounts();
+      }
+
+    } else {
+      console.log(`  No accounts.csv found. Scanning transactions for accounts...`);
+      
+      const transactionFiles = fs.readdirSync(bankDir)
+        .filter(f => f.endsWith('.csv') && f !== 'accounts.csv')
+        .map(f => path.join(bankDir, f));
+
+      for (const file of transactionFiles) {
+          const transactions: CsvTransaction[] = [];
+          await new Promise<void>((resolve, reject) => {
+              fs.createReadStream(file)
+              .pipe(csv())
+              .on('data', (data: any) => transactions.push(data))
+              .on('end', () => resolve())
+              .on('error', (err: any) => reject(err));
+          });
+
+          const uniqueAccounts = new Set<string>();
+          const accountNames = new Map<string, string>();
+
+          for (const tx of transactions) {
+              const accountId = tx['Unique Account ID'];
+              const accountName = tx['Account Name'];
+              if (accountId) {
+                  uniqueAccounts.add(accountId);
+                  if (accountName) {
+                      accountNames.set(accountId, accountName);
+                  }
+              }
+          }
+
+          for (const accountId of uniqueAccounts) {
+              const nameToUse = accountNames.get(accountId) || accountId;
+              let actualAccount = accountsCache.find((a: any) => a.name === nameToUse || a.name === accountId);
+
+              if (!actualAccount) {
+                  console.log(`    Account "${nameToUse}" (${accountId}) not found. Creating...`);
+                  if (!argv['dry-run']) {
+                      try {
+                          const newId = await api.createAccount({ name: nameToUse, type: 'other', offbudget: true });
+                          actualAccount = { id: newId, name: nameToUse };
+                          accountsCache.push(actualAccount);
+                      } catch (e: any) {
+                          console.error(`    Error creating account: ${e.message}`);
+                      }
+                  } else {
+                      console.log(`    [Dry Run] Would create account "${nameToUse}"`);
+                      actualAccount = { id: 'dry-run-id', name: nameToUse };
+                      accountsCache.push(actualAccount);
+                  }
+              }
+          }
+      }
+      
+      if (!argv['dry-run']) {
+          await api.sync();
           accountsCache = await api.getAccounts();
       }
-      if (!argv['dry-run']) {
-        console.log('    Syncing accounts...');
-        await api.sync();
-      }
-    } else {
-      console.log(`  No accounts.csv found. Accounts will be created from transaction data if they don't exist.`);
     }
+  }
 
-    // 4b. Process Transactions
+  // 5. Process Transactions (Pass 2)
+  console.log('\n--- Phase 2: Transaction Import ---');
+  // Refresh cache one last time to be sure
+  if (!argv['dry-run']) {
+      accountsCache = await api.getAccounts();
+  }
+
+  for (const bankDir of bankDirs) {
+    const bankName = path.basename(bankDir);
+    console.log(`\nImporting transactions for bank: ${bankName}`);
+
     const transactionFiles = fs.readdirSync(bankDir)
         .filter(f => f.endsWith('.csv') && f !== 'accounts.csv')
         .map(f => path.join(bankDir, f));
 
     for (const file of transactionFiles) {
-        console.log(`  Processing transactions file: ${path.basename(file)}...`);
+        console.log(`  Processing file: ${path.basename(file)}...`);
         const transactions: CsvTransaction[] = [];
 
         await new Promise<void>((resolve, reject) => {
@@ -234,7 +280,7 @@ async function main() {
         // Group by Account ID
         const transactionsByAccount: Record<string, CsvTransaction[]> = {};
         for (const tx of transactions) {
-            const accountId = tx['Unique Account ID']; // This maps to the account
+            const accountId = tx['Unique Account ID'];
             if (!accountId) continue;
             if (!transactionsByAccount[accountId]) {
                 transactionsByAccount[accountId] = [];
@@ -243,26 +289,15 @@ async function main() {
         }
 
         for (const [accountId, txs] of Object.entries(transactionsByAccount)) {
-            // Find the account in Actual
-            // We attempt to find the account by Name (from transaction) or ID.
-            // If accounts.csv was present, the account might have been created/synced there.
-            // If not, we fall back to creating it here.
-            
             const txAccountName = txs[0]['Account Name'];
+            const nameToUse = txAccountName || accountId;
             
-            let actualAccount = accountsCache.find((a: any) => a.name === txAccountName || a.name === accountId);
+            // Find the account in Actual - it SHOULD exist now
+            const actualAccount = accountsCache.find((a: any) => a.name === nameToUse || a.name === accountId);
 
             if (!actualAccount) {
-                console.log(`    Account "${txAccountName || accountId}" not found in Actual. Creating...`);
-                 if (!argv['dry-run']) {
-                    const nameToUse = txAccountName || accountId;
-                    const newId = await api.createAccount({ name: nameToUse, type: 'other', offbudget: true });
-                    actualAccount = { id: newId, name: nameToUse };
-                    accountsCache.push(actualAccount);
-                } else {
-                    console.log(`    [Dry Run] Would create account "${txAccountName || accountId}"`);
-                    actualAccount = { id: 'dry-run-id', name: txAccountName || accountId };
-                }
+                console.error(`    CRITICAL ERROR: Account "${nameToUse}" (${accountId}) still not found in Actual after Phase 1. Skipping transactions.`);
+                continue;
             }
 
             // Prepare Transactions
@@ -274,7 +309,7 @@ async function main() {
                 const dateStr = tx['Date'].substring(0, 10);
 
                 // Payee: Use 'Payee' or 'Payee Name' if available, else 'Description'
-                const payee = tx['Payee'] || tx['Payee Name'] || tx['Description'];
+                const payee = tx['Payee Name'] || tx['Payee'] || tx['Description'];
 
                 // Notes: Use 'Notes' if available
                 let notes = tx['Notes'] || '';
