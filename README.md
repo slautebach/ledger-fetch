@@ -9,7 +9,7 @@ The `ledger-fetch` tool currently supports the following financial institutions:
 * RBC (Royal Bank of Canada)
 * Wealthsimple
 * Amex (American Express)
-* Canadian Tire Bank
+* Canadian Tire Bank - *Credit Cards only*
 * BMO (Bank of Montreal) - *Credit Cards only*
 * CIBC (Canadian Imperial Bank of Commerce) - *Credit Cards only*
 
