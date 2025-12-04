@@ -82,6 +82,55 @@ class AmexDownloader(BankDownloader):
         except Exception:
             print("Warning: Timed out waiting for Statements elements. Script might fail to find buttons.")
 
+    def fetch_accounts(self) -> List[Account]:
+        """
+        Fetch account details including current balance from the dashboard.
+        """
+        print("Fetching account details from Dashboard...")
+        try:
+            # Navigate to dashboard if not already there
+            if "dashboard" not in self.page.url:
+                self.page.goto("https://global.americanexpress.com/dashboard")
+            
+            # Wait for the balance element
+            # User provided HTML structure suggests:
+            # <span data-locator-id="total_balance_title_value"><h1 ...><span>$1,675.45</span>...
+            balance_selector = 'span[data-locator-id="total_balance_title_value"] h1 span'
+            
+            try:
+                self.page.wait_for_selector(balance_selector, timeout=15000)
+                balance_el = self.page.locator(balance_selector).first
+                balance_text = balance_el.text_content()
+                
+                # Clean balance text (remove '$', ',', etc)
+                # Note: The HTML shows "1,675<!-- -->.45", text_content() should handle the comment but let's be safe
+                clean_balance = balance_text.replace('$', '').replace(',', '').strip()
+                current_balance = float(clean_balance)
+                print(f"  Found current balance: ${current_balance}")
+            except Exception as e:
+                print(f"  Could not extract balance: {e}")
+                current_balance = 0.0
+
+            # Get Account Key/ID
+            account_key = self._extract_account_key()
+            if not account_key:
+                # Fallback if we can't find the key
+                account_key = "AMEX-DEFAULT"
+                
+            # Create Account object
+            # We don't have full account number or name easily available on dashboard without more scraping
+            # But we can create a basic account object
+            account = Account({}, account_key)
+            account.current_balance = current_balance
+            account.account_name = "American Express" # Default name
+            account.currency = "CAD" # Assumption
+            
+            return [account]
+
+        except Exception as e:
+            print(f"Error fetching accounts: {e}")
+            return []
+
     def download_transactions(self) -> List[Transaction]:
         """Download CSVs and parse them."""
         print("Scanning for available statements...")
@@ -94,6 +143,8 @@ class AmexDownloader(BankDownloader):
         
         # 2. Extract Account Key
         account_key = self._extract_account_key()
+        if not account_key:
+            account_key = "AMEX-DEFAULT"
         
         # 3. Find Download Buttons
         # Retry finding buttons for a few seconds
@@ -129,7 +180,25 @@ class AmexDownloader(BankDownloader):
                 
             print(f"Processing statement for {date_part}...")
             
-            if account_key:
+            # We use the key for downloading if available, but we also need it for parsing
+            # If we have a key, we use it. If not, we skip downloading?
+            # The original code skipped if no account key.
+            # But now we want to support AMEX-DEFAULT if key is missing?
+            # Actually, the download URL requires an account_key.
+            # So if we don't have a real key, we probably can't download via API.
+            # But fetch_accounts can still work with AMEX-DEFAULT.
+            
+            # Let's check the original logic:
+            # if account_key:
+            #    ... download ...
+            # else:
+            #    print("  Skipping (No Account Key)")
+            
+            # So if we can't find a key, we can't download.
+            # Thus, for transactions, we will always have a real key if we download.
+            # So we should use that real key for the ID.
+            
+            if account_key and account_key != "AMEX-DEFAULT":
                 try:
                     file_path = self._download_statement(account_key, date_part, i == 0, temp_dir)
                     if file_path:
@@ -144,7 +213,8 @@ class AmexDownloader(BankDownloader):
         # Parse all downloaded files
         all_transactions = []
         for csv_file in downloaded_files:
-            txns = self._parse_amex_csv(csv_file)
+            # Pass the account_key (which must be valid if we downloaded)
+            txns = self._parse_amex_csv(csv_file, account_key)
             all_transactions.extend(txns)
             
         # Cleanup temp dir
@@ -256,7 +326,7 @@ class AmexDownloader(BankDownloader):
             print(f"  Download error details: {e}")
             return None
 
-    def _parse_amex_csv(self, csv_path: str) -> List[Transaction]:
+    def _parse_amex_csv(self, csv_path: str, account_id: str = "AMEX") -> List[Transaction]:
         """Parse Amex CSV."""
         transactions = []
         try:
@@ -291,7 +361,7 @@ class AmexDownloader(BankDownloader):
                 # Generate IDs
                 # Amex might have 'Reference'
                 ref = row.get('Reference')
-                unique_account_id = "AMEX" # Placeholder as Amex CSV often lacks account info
+                unique_account_id = account_id 
                 unique_trans_id = str(ref) if not pd.isna(ref) else TransactionNormalizer.generate_transaction_id(date, amount, description, unique_account_id)
                 
                 payee_name = TransactionNormalizer.normalize_payee(description)
