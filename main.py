@@ -150,8 +150,8 @@ def main():
         # Add a delay between banks to ensure browser process is fully closed
         # and file locks on the profile are released
         import time
-        print("Waiting 10 seconds for browser cleanup...")
-        time.sleep(10)
+        print("Waiting for browser cleanup...")
+        time.sleep(1)
 
     run_normalization()        
     print("\nAll tasks completed.")

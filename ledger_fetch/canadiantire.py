@@ -6,7 +6,7 @@ from typing import List, Dict, Any
 from .base import BankDownloader
 from .base import BankDownloader
 from .utils import TransactionNormalizer
-from .models import Transaction, Account
+from .models import Transaction, Account, AccountType
 
 class CanadianTireDownloader(BankDownloader):
     """
@@ -123,7 +123,7 @@ class CanadianTireDownloader(BankDownloader):
                         acc = Account(card, unique_id)
                         acc.account_name = display_name
                         acc.account_number = last_4
-                        acc.type = "Credit Card"
+                        acc.type = AccountType.CREDIT_CARD
                         acc.currency = "CAD"
                         
                         # Map Current Balance

@@ -38,7 +38,7 @@ amex:
 
 canadiantire:
   enabled: true
-
+  invert_credit_transactions: false
 
 
 actual:

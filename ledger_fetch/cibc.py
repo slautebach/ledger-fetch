@@ -6,7 +6,7 @@ from playwright.sync_api import Request
 from .base import BankDownloader
 from .base import BankDownloader
 from .utils import TransactionNormalizer
-from .models import Transaction, Account
+from .models import Transaction, Account, AccountType
 
 class CIBCDownloader(BankDownloader):
     """
@@ -120,7 +120,7 @@ class CIBCDownloader(BankDownloader):
                 # We don't have account number, just internal ID and name
                 acc = Account({'href': href}, acc_id)
                 acc.account_name = name
-                acc.type = "Credit Card" if "credit-cards" in href else "Bank Account"
+                acc.type = AccountType.CREDIT_CARD if "credit-cards" in href else AccountType.CHEQUING # Default to Chequing for bank accounts for now
                 acc.currency = "CAD" # Assumption
                 
                 # Try to find balance

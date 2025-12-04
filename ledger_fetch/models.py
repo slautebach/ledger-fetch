@@ -1,5 +1,16 @@
 from typing import Dict, Any, Union, List
 from abc import ABC, abstractmethod
+from enum import Enum
+
+class AccountType(str, Enum):
+    CHEQUING = "Chequing"
+    SAVINGS = "Savings"
+    CREDIT_CARD = "Credit Card"
+    LINE_OF_CREDIT = "Line of Credit"
+    MORTGAGE = "Mortgage"
+    INVESTMENT = "Investment"
+    LOAN = "Loan"
+    OTHER = "Other"
 
 class BaseModel(ABC):
     def __init__(self, raw_data: Dict[str, Any]):
@@ -236,6 +247,18 @@ class Account(BaseModel):
         self.set('Type', value)
 
     @property
+    def is_liability(self) -> bool:
+        """Check if the account is a liability (credit) account."""
+        # Normalize type to check against Enum values
+        t = self.type
+        return t in [
+            AccountType.CREDIT_CARD,
+            AccountType.LINE_OF_CREDIT,
+            AccountType.MORTGAGE,
+            AccountType.LOAN
+        ]
+
+    @property
     def status(self) -> str:
         return self.get('Status', '')
 
@@ -245,7 +268,11 @@ class Account(BaseModel):
 
     @property
     def current_balance(self) -> float:
-        return self.get('Current Balance', 0.0)
+        val = self.get('Current Balance', 0.0)
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return 0.0
 
     @current_balance.setter
     def current_balance(self, value: float):

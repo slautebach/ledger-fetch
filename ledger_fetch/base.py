@@ -19,6 +19,7 @@ class BankDownloader(ABC):
         self.context: BrowserContext = None
         self.page: Page = None
         self.playwright: Playwright = None
+        self.accounts_cache: Dict[str, Account] = {}
 
     def run(self):
         """
@@ -37,18 +38,21 @@ class BankDownloader(ABC):
             self.setup_driver()
             try:
                 self.login()
+                
+                # Fetch accounts first so we have type information
+                try:
+                    accounts = self.fetch_accounts()
+                    if accounts:
+                        self.save_accounts(accounts)
+                        # Cache accounts for transaction processing
+                        self.accounts_cache = {a.unique_account_id: a for a in accounts}
+                except Exception as e:
+                    print(f"Warning: Failed to fetch accounts: {e}")
+                    self.accounts_cache = {}
+
                 self.navigate_to_transactions()
                 transactions = self.download_transactions()
                 self.save_transactions(transactions)
-                # We should also fetch and save accounts if possible, but that might be bank specific
-                # For now, let's assume download_transactions might also trigger account fetching or we add a new step
-                # But the plan said "Implement fetch_accounts (or similar) to return List[Account] and save them."
-                # So let's add a hook for it.
-                accounts = self.fetch_accounts()
-                if accounts:
-                    self.save_accounts(accounts)
-                if accounts:
-                    self.save_accounts(accounts)
             except Exception as e:
                 if self.config.debug:
                     print(f"\n{'='*60}")
@@ -145,8 +149,31 @@ class BankDownloader(ABC):
         from .utils import CSVWriter
         writer = CSVWriter(self.config.output_dir / self.get_bank_name())
         
-        # Convert Transactions to dicts
-        txn_dicts = [t.to_csv_row() for t in transactions]
+        # Convert Transactions to dicts and enforce signs
+        txn_dicts = []
+        for t in transactions:
+            # Check if account is liability
+            acc = self.accounts_cache.get(t.unique_account_id)
+            if acc and acc.is_liability:
+                # Check if this bank is configured to invert credit transactions
+                bank_name = self.get_bank_name()
+                bank_config = getattr(self.config, bank_name, None)
+                
+                if bank_config and bank_config.invert_credit_transactions:
+                    # Enforce negative for purchases (if positive) and positive for payments (if negative)
+                    # Assumption: Bank returns positive for purchases.
+                    # We want: Purchase = Negative, Payment = Positive.
+                    # If we just multiply by -1, we assume the input is "Amount Owed" or "Debit Amount".
+                    try:
+                        amount = float(t.amount)
+                        # If it's a liability account, we invert the sign relative to "Debit is Positive" convention
+                        # So a $50 purchase (Debit) becomes -50.
+                        # A -$50 payment (Credit) becomes +50.
+                        t.amount = -amount
+                    except (ValueError, TypeError):
+                        pass
+            
+            txn_dicts.append(t.to_csv_row())
         
         by_month = {}
         for txn in txn_dicts:
@@ -258,6 +285,11 @@ class BankDownloader(ABC):
         from .utils import CSVWriter
         writer = CSVWriter(self.config.output_dir / self.get_bank_name())
         
+        # Enforce negative balance for liabilities
+        for acc in accounts:
+            if acc.is_liability and acc.current_balance > 0:
+                acc.current_balance = -(acc.current_balance)
+        
         account_dicts = [a.to_csv_row() for a in accounts]
         writer.write(account_dicts, "accounts.csv", fieldnames=Account.CSV_FIELDS)
 
@@ -268,7 +300,7 @@ class BankDownloader(ABC):
                 self.context.close()
                 # Give the browser process a moment to fully release file locks
                 import time
-                time.sleep(2)
+                time.sleep(5)
             except Exception as e:
                 print(f"Warning: Error closing context: {e}")
 

@@ -123,7 +123,9 @@ class TransactionNormalizer:
                 '%d %b %Y', 
                 '%B %d, %Y',
                 '%Y-%m-%dT%H:%M:%S', # ISO with time
-                '%Y-%m-%dT%H:%M:%S.%f' # ISO with microseconds
+                '%Y-%m-%dT%H:%M:%S.%f', # ISO with microseconds
+                '%Y-%m-%dT%H:%M:%S%z', # ISO with time and timezone
+                '%Y-%m-%dT%H:%M:%S.%f%z' # ISO with microseconds and timezone
             ]
             
             for fmt in formats:

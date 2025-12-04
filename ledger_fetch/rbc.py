@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from .base import BankDownloader
 from .utils import TransactionNormalizer
-from .models import Transaction, Account
+from .models import Transaction, Account, AccountType
 
 class RBCDownloader(BankDownloader):
     """
@@ -50,6 +50,35 @@ class RBCDownloader(BankDownloader):
         """
         pass
 
+    def _normalize_account_number(self, raw_num: str, cc: bool = False) -> str:
+        """
+        Normalize account number to ensure matching between API (masked) and CSV (full).
+        
+        Rules:
+        1. Remove spaces and dashes.
+        2. If length is 16:
+           - If all digits (Credit Card), mask middle 8 digits.
+           - If contains '*', preserve it (already masked).
+        3. Otherwise, return digits only.
+        """
+        if not raw_num:
+            return ""
+            
+        # Remove spaces and dashes
+        clean = str(raw_num).replace(" ", "").replace("-", "")
+        
+        # Check for Credit Card length (16)
+        if cc and len(clean) == 16:
+            # If all digits, mask it
+            if clean.isdigit():
+                 return f"{clean[:4]}********{clean[-4:]}"
+            # If already masked (contains *), return as is (assuming standard format)
+            if '*' in clean:
+                 return clean
+                 
+        # Fallback: strip non-numeric for other account types
+        return "".join(c for c in clean if c.isdigit())
+
     def fetch_accounts(self) -> List[Account]:
         """Fetch list of accounts from the API."""
         print("Fetching account list...")
@@ -86,11 +115,11 @@ class RBCDownloader(BankDownloader):
                 for acc in da_list:
                     if not acc: continue
                     # Use Account Number as Unique ID
-                    acc_num = acc.get('accountNumber')
+                    acc_num = self._normalize_account_number(acc.get('accountNumber'))
                     if acc_num:
                         unique_id = f"RBC-{acc_num}"
                     else:
-                         unique_id = acc.get('encryptedAccountNumber')
+                        unique_id = acc.get('encryptedAccountNumber')
                     
                     account = Account(acc, unique_id)
                     
@@ -103,7 +132,14 @@ class RBCDownloader(BankDownloader):
                             pass
                     account.account_name = get_name(acc)
                     account.account_number = acc.get('accountNumber', '')
-                    account.type = 'Deposit'
+                    
+                    # Determine type based on name
+                    name_lower = account.account_name.lower()
+                    if 'saving' in name_lower:
+                        account.type = AccountType.SAVINGS
+                    else:
+                        account.type = AccountType.CHEQUING # Default to Chequing
+                        
                     account.currency = get_currency(acc)
                     accounts.append(account)
 
@@ -113,11 +149,11 @@ class RBCDownloader(BankDownloader):
                 for acc in cc_list:
                     if not acc: continue
                     # Use Account Number as Unique ID
-                    acc_num = acc.get('accountNumber')
+                    acc_num = self._normalize_account_number(acc.get('accountNumber'), True)
                     if acc_num:
                         unique_id = f"RBC-{acc_num}"
                     else:
-                         unique_id = acc.get('encryptedAccountNumber')
+                        unique_id = acc.get('encryptedAccountNumber')
 
                     account = Account(acc, unique_id)
 
@@ -130,7 +166,7 @@ class RBCDownloader(BankDownloader):
                             pass
                     account.account_name = get_name(acc)
                     account.account_number = acc.get('accountNumber', '')
-                    account.type = 'CreditCard'
+                    account.type = AccountType.CREDIT_CARD
                     account.currency = get_currency(acc)
                     accounts.append(account)
 
@@ -139,11 +175,11 @@ class RBCDownloader(BankDownloader):
                 ll_list = data['linesLoans'].get('accounts', [])
                 for acc in ll_list:
                     if not acc: continue
-                    acc_num = acc.get('accountNumber')
+                    acc_num = self._normalize_account_number(acc.get('accountNumber'), False)
                     if acc_num:
                         unique_id = f"RBC-{acc_num}"
                     else:
-                         unique_id = acc.get('encryptedAccountNumber')
+                        unique_id = acc.get('encryptedAccountNumber')
 
                     account = Account(acc, unique_id)
                     
@@ -155,7 +191,7 @@ class RBCDownloader(BankDownloader):
                             pass
                     account.account_name = get_name(acc)
                     account.account_number = acc.get('accountNumber', '')
-                    account.type = 'LineLoan'
+                    account.type = AccountType.LINE_OF_CREDIT
                     account.currency = get_currency(acc)
                     accounts.append(account)
 
@@ -164,11 +200,11 @@ class RBCDownloader(BankDownloader):
                 mtg_list = data['mortgages'].get('accounts', [])
                 for acc in mtg_list:
                     if not acc: continue
-                    acc_num = acc.get('accountNumber')
+                    acc_num = self._normalize_account_number(acc.get('accountNumber'))
                     if acc_num:
                         unique_id = f"RBC-{acc_num}"
                     else:
-                         unique_id = acc.get('encryptedAccountNumber')
+                        unique_id = acc.get('encryptedAccountNumber')
 
                     account = Account(acc, unique_id)
                     
@@ -180,7 +216,7 @@ class RBCDownloader(BankDownloader):
                             pass
                     account.account_name = get_name(acc)
                     account.account_number = acc.get('accountNumber', '')
-                    account.type = 'Mortgage'
+                    account.type = AccountType.MORTGAGE
                     account.currency = get_currency(acc)
                     accounts.append(account)
 
@@ -189,11 +225,11 @@ class RBCDownloader(BankDownloader):
                 inv_list = data['investments'].get('accounts', [])
                 for acc in inv_list:
                     if not acc: continue
-                    acc_num = acc.get('accountNumber')
+                    acc_num = self._normalize_account_number(acc.get('accountNumber'))
                     if acc_num:
                         unique_id = f"RBC-{acc_num}"
                     else:
-                         unique_id = acc.get('encryptedAccountNumber')
+                        unique_id = acc.get('encryptedAccountNumber')
 
                     account = Account(acc, unique_id)
                     
@@ -207,7 +243,7 @@ class RBCDownloader(BankDownloader):
                     
                     account.account_name = get_name(acc)
                     account.account_number = acc.get('accountNumber', '')
-                    account.type = 'Investment'
+                    account.type = AccountType.INVESTMENT
                     account.currency = get_currency(acc)
                     accounts.append(account)
             
@@ -231,9 +267,9 @@ class RBCDownloader(BankDownloader):
         
         # Determine endpoint based on account type
         service_path = "transactions/pda/account"
-        if account.type == 'CreditCard':
+        if account.type == AccountType.CREDIT_CARD:
             service_path = "transactions/cc/posted/account"
-        elif account.type == 'Deposit':
+        elif account.type in [AccountType.CHEQUING, AccountType.SAVINGS]:
             service_path = "transactions/pda/account"
         else:
             print(f"  Skipping API fetch for {account.type} (relying on CSV fallback)")
@@ -243,11 +279,11 @@ class RBCDownloader(BankDownloader):
         base_url = "https://www1.royalbank.com/sgw5/digital/transaction-presentation-service-v3-dbb/v3"
         
         # Query params
-        if account.type == 'CreditCard':
+        if account.type == AccountType.CREDIT_CARD:
              # Use parameters observed in HAR for Credit Cards
              # Note: We might want to fetch both posted and pending, but for now let's stick to posted as per user example
              params = f"billingStatus=posted&txType=postedCreditCard&timestamp={int(time.time()*1000)}"
-        elif account.type == 'Deposit':
+        elif account.type in [AccountType.CHEQUING, AccountType.SAVINGS]:
             params = f"intervalType=DAY&intervalValue={days}&type=ALL&txType=pda&useColtOnly=response"
         else:
              # Should not happen due to check above
@@ -303,9 +339,28 @@ class RBCDownloader(BankDownloader):
             amount = float(raw.get('amount', 0))
             
             # Description
-            desc1 = raw.get('description1', '')
+            # Try multiple common keys for description
+            raw_desc = raw.get('description1') or raw.get('description') or raw.get('merchantName') or raw.get('transactionDescription') or ''
+            
+            # Handle list of strings
+            if isinstance(raw_desc, list):
+                desc1 = " ".join(str(x) for x in raw_desc)
+            else:
+                desc1 = str(raw_desc)
+
             desc2 = raw.get('description2', '')
+            if isinstance(desc2, list):
+                desc2 = " ".join(str(x) for x in desc2)
+            else:
+                desc2 = str(desc2)
+                
             description = f"{desc1} {desc2}".strip()
+            
+            if not description:
+                print(f"  Warning: Empty description for transaction. Raw keys: {list(raw.keys())}")
+                # Fallback to using the raw dict as string if absolutely nothing else
+                # description = str(raw) 
+            
             description = TransactionNormalizer.clean_description(description)
             
             # Payee
@@ -364,13 +419,13 @@ class RBCDownloader(BankDownloader):
             for acc in accounts:
                 # Re-generate the ID logic to match what we do in _process_transaction and CSV parsing
                 # Logic: Use Account Number
-                num = acc.account_number
+                num = self._normalize_account_number(acc.account_number, acc.type == AccountType.CREDIT_CARD)
                 if num:
                     api_account_ids.add(f"RBC-{num}")
 
             for txn in csv_txns:
                 # txn is a Transaction object
-                acc_num = txn.raw_data.get('Account Number', '')
+                acc_num = self._normalize_account_number(txn.raw_data.get('Account Number', ''), txn.raw_data.get('Account Type', '') == 'Visa')
                 
                 # Generate ID for this CSV transaction's account
                 # Use Account Number directly
@@ -482,11 +537,11 @@ class RBCDownloader(BankDownloader):
                     
                     # Account info
                     acc_type = str(row.get('Account Type', '')) if not pd.isna(row.get('Account Type')) else ''
-                    acc_number = str(row.get('Account Number', '')) if not pd.isna(row.get('Account Number')) else ''
+                    acc_number = self._normalize_account_number(str(row.get('Account Number', '')) if not pd.isna(row.get('Account Number')) else '')
                     account_display = f"{acc_type} {acc_number}".strip()
                     
                     # Description
-                    desc1 = str(row.get('Description 1', '')) if not pd.isna(row.get('Description 1')) else ''
+                    desc1 = str(row.get('Description 1', '')) if not pd.isna(row.get('Description 1')) else str(row.get('Description', '')) if not pd.isna(row.get('Description')) else ''
                     desc2 = str(row.get('Description 2', '')) if not pd.isna(row.get('Description 2')) else ''
                     description = f"{desc1} {desc2}".strip() if desc2 else desc1
                     description = TransactionNormalizer.clean_description(description)

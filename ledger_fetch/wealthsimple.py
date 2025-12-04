@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List, Dict, Any
 from .base import BankDownloader
 from .utils import TransactionNormalizer
-from .models import Transaction, Account
+from .models import Transaction, Account, AccountType
 from .config import settings
 
 # Try to import ws_api, handle if missing
@@ -137,7 +137,15 @@ class WealthsimpleDownloader(BankDownloader):
             acc.account_name = acc_data.get('nickname') or acc_data.get('account_type') or unique_id
             acc.account_number = account_number
             acc.currency = acc_data.get('currency')
-            acc.type = acc_data.get('type')
+            
+            # Map Type
+            ws_type = acc_data.get('type')
+            if ws_type == 'ca_credit_card':
+                acc.type = AccountType.CREDIT_CARD
+            elif ws_type == 'ca_cash_msb':
+                acc.type = AccountType.CHEQUING
+            else:
+                acc.type = AccountType.INVESTMENT
             
             # Extra fields
             acc.raw_data['Status'] = acc_data.get('status')

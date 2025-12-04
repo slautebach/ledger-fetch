@@ -149,3 +149,35 @@ Each CSV file contains normalized transaction data, including:
 * `Is Transfer`
 * `Notes`
 And potentially other bank-specific fields that the bank provides in their transaction exports.
+
+## Account Types
+
+`ledger-fetch` standardizes account types across all banks to the following values:
+
+* `Chequing`
+* `Savings`
+* `Credit Card`
+* `Line of Credit`
+* `Mortgage`
+* `Investment`
+* `Loan`
+* `Other`
+
+## Negative Balance Enforcement
+
+For liability accounts (Credit Card, Line of Credit, Mortgage, Loan), the tool enforces the following conventions:
+
+* **Account Balance**: Positive balances (amount owed) are converted to negative.
+* **Transactions**:
+  * Purchases (Debits) are converted to negative values.
+  * Payments (Credits) are converted to positive values.
+
+### Configuration
+
+You can control the transaction sign enforcement per bank in `config.yaml` using the `invert_credit_transactions` flag. This is useful if a bank already provides negative values for purchases.
+
+```yaml
+rbc:
+  enabled: true
+  invert_credit_transactions: true # Enforce negative signs for this bank
+```

@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class BankConfig(BaseSettings):
     """Configuration specific to a bank."""
     enabled: bool = True
+    invert_credit_transactions: bool = False
     # Add other bank-specific settings here if needed
 
 class Config(BaseSettings):

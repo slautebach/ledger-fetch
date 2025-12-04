@@ -7,7 +7,7 @@ import pandas as pd
 from typing import List, Dict, Any
 from .base import BankDownloader
 from .utils import TransactionNormalizer
-from .models import Transaction, Account
+from .models import Transaction, Account, AccountType
 
 class AmexDownloader(BankDownloader):
     """
@@ -124,6 +124,7 @@ class AmexDownloader(BankDownloader):
             account.current_balance = current_balance
             account.account_name = "American Express" # Default name
             account.currency = "CAD" # Assumption
+            account.type = AccountType.CREDIT_CARD
             
             return [account]
 

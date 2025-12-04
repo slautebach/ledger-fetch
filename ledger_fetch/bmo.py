@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 from .base import BankDownloader
 from .base import BankDownloader
 from .utils import TransactionNormalizer
-from .models import Transaction, Account
+from .models import Transaction, Account, AccountType
 
 
 class BMODownloader(BankDownloader):
@@ -88,7 +88,7 @@ class BMODownloader(BankDownloader):
             acc = Account(acc_dict, unique_id)
             acc.account_name = name
             acc.account_number = number
-            acc.type = "Credit Card"
+            acc.type = AccountType.CREDIT_CARD
             acc.currency = "CAD" # Assumption
             
             # Map Current Balance
