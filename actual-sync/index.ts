@@ -189,64 +189,65 @@ async function main() {
         accountsCache = await api.getAccounts();
       }
 
-    } else {
-      console.log(`  No accounts.csv found. Scanning transactions for accounts...`);
-      
-      const transactionFiles = fs.readdirSync(bankDir)
-        .filter(f => f.endsWith('.csv') && f !== 'accounts.csv')
-        .map(f => path.join(bankDir, f));
+    }
+    
+    // Always scan transaction files for additional accounts not in accounts.csv
+    console.log(`  Scanning transactions for additional accounts...`);
+    
+    const transactionFiles = fs.readdirSync(bankDir)
+      .filter(f => f.endsWith('.csv') && f !== 'accounts.csv')
+      .map(f => path.join(bankDir, f));
 
-      for (const file of transactionFiles) {
-          const transactions: CsvTransaction[] = [];
-          await new Promise<void>((resolve, reject) => {
-              fs.createReadStream(file)
-              .pipe(csv())
-              .on('data', (data: any) => transactions.push(data))
-              .on('end', () => resolve())
-              .on('error', (err: any) => reject(err));
-          });
+    for (const file of transactionFiles) {
+        const transactions: CsvTransaction[] = [];
+        await new Promise<void>((resolve, reject) => {
+            fs.createReadStream(file)
+            .pipe(csv())
+            .on('data', (data: any) => transactions.push(data))
+            .on('end', () => resolve())
+            .on('error', (err: any) => reject(err));
+        });
 
-          const uniqueAccounts = new Set<string>();
-          const accountNames = new Map<string, string>();
+        const uniqueAccounts = new Set<string>();
+        const accountNames = new Map<string, string>();
 
-          for (const tx of transactions) {
-              const accountId = tx['Unique Account ID'];
-              const accountName = tx['Account Name'];
-              if (accountId) {
-                  uniqueAccounts.add(accountId);
-                  if (accountName) {
-                      accountNames.set(accountId, accountName);
-                  }
-              }
-          }
+        for (const tx of transactions) {
+            const accountId = tx['Unique Account ID'];
+            const accountName = tx['Account Name'];
+            if (accountId) {
+                uniqueAccounts.add(accountId);
+                if (accountName) {
+                    accountNames.set(accountId, accountName);
+                }
+            }
+        }
 
-          for (const accountId of uniqueAccounts) {
-              const nameToUse = accountNames.get(accountId) || accountId;
-              let actualAccount = accountsCache.find((a: any) => a.name === nameToUse || a.name === accountId);
+        for (const accountId of uniqueAccounts) {
+            const nameToUse = accountNames.get(accountId) || accountId;
+            let actualAccount = accountsCache.find((a: any) => a.name === nameToUse || a.name === accountId);
 
-              if (!actualAccount) {
-                  console.log(`    Account "${nameToUse}" (${accountId}) not found. Creating...`);
-                  if (!argv['dry-run']) {
-                      try {
-                          const newId = await api.createAccount({ name: nameToUse, type: 'other', offbudget: true });
-                          actualAccount = { id: newId, name: nameToUse };
-                          accountsCache.push(actualAccount);
-                      } catch (e: any) {
-                          console.error(`    Error creating account: ${e.message}`);
-                      }
-                  } else {
-                      console.log(`    [Dry Run] Would create account "${nameToUse}"`);
-                      actualAccount = { id: 'dry-run-id', name: nameToUse };
-                      accountsCache.push(actualAccount);
-                  }
-              }
-          }
-      }
-      
-      if (!argv['dry-run']) {
-          await api.sync();
-          accountsCache = await api.getAccounts();
-      }
+            if (!actualAccount) {
+                console.log(`    Account "${nameToUse}" (${accountId}) not found. Creating...`);
+                if (!argv['dry-run']) {
+                    try {
+                        const newId = await api.createAccount({ name: nameToUse, type: 'other', offbudget: true });
+                        actualAccount = { id: newId, name: nameToUse };
+                        accountsCache.push(actualAccount);
+                    } catch (e: any) {
+                        console.error(`    Error creating account: ${e.message}`);
+                    }
+                } else {
+                    console.log(`    [Dry Run] Would create account "${nameToUse}"`);
+                    actualAccount = { id: 'dry-run-id', name: nameToUse };
+                    accountsCache.push(actualAccount);
+                }
+            }
+        }
+    }
+    
+    if (!argv['dry-run']) {
+        await api.sync();
+        accountsCache = await api.getAccounts();
     }
   }
 

@@ -146,6 +146,12 @@ def main():
         except Exception as e:
             print(f"\n❌ {name.upper()} failed: {e}")
             # Continue to next downloader even if one fails
+            
+        # Add a delay between banks to ensure browser process is fully closed
+        # and file locks on the profile are released
+        import time
+        print("Waiting 10 seconds for browser cleanup...")
+        time.sleep(10)
 
     run_normalization()        
     print("\nAll tasks completed.")

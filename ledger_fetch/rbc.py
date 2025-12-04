@@ -90,6 +90,14 @@ class RBCDownloader(BankDownloader):
                          unique_id = acc.get('encryptedAccountNumber')
                     
                     account = Account(acc, unique_id)
+                    
+                    # Map Current Balance
+                    current_balance = acc.get('currentBalance')
+                    if current_balance is not None:
+                        try:
+                            account.current_balance = float(current_balance)
+                        except (ValueError, TypeError):
+                            pass
                     account.account_name = get_name(acc)
                     account.account_number = acc.get('accountNumber', '')
                     account.type = 'Deposit'
@@ -108,6 +116,14 @@ class RBCDownloader(BankDownloader):
                          unique_id = acc.get('encryptedAccountNumber')
 
                     account = Account(acc, unique_id)
+
+                    # Map Current Balance
+                    current_balance = acc.get('currentBalance')
+                    if current_balance is not None:
+                        try:
+                            account.current_balance = float(current_balance)
+                        except (ValueError, TypeError):
+                            pass
                     account.account_name = get_name(acc)
                     account.account_number = acc.get('accountNumber', '')
                     account.type = 'CreditCard'

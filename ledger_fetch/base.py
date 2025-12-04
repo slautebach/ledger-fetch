@@ -165,62 +165,93 @@ class BankDownloader(ABC):
         self.ensure_accounts_exist(transactions)
 
     def ensure_accounts_exist(self, transactions: List[Transaction]):
-        """Ensure all accounts in transactions exist in accounts.csv."""
+        """
+        Ensure all accounts in transactions exist in accounts.csv.
+        Also updates existing accounts if the transaction provides a 'better' (e.g. unmasked) account number.
+        """
         accounts_file = self.config.output_dir / self.get_bank_name() / "accounts.csv"
         
-        known_ids = set()
+        known_accounts: Dict[str, Account] = {}
         if accounts_file.exists():
             import csv
             try:
                 with open(accounts_file, 'r', encoding='utf-8') as f:
                     reader = csv.DictReader(f)
                     for row in reader:
-                        known_ids.add(row.get('Unique Account ID'))
-            except Exception:
-                pass
-        
-        new_accounts = {}
+                        acc_id = row.get('Unique Account ID')
+                        if acc_id:
+                            # Reconstruct Account object
+                            # We pass row as raw_data, which works for simple fields
+                            known_accounts[acc_id] = Account(row, acc_id)
+            except Exception as e:
+                print(f"Warning: Error reading existing accounts.csv: {e}")
+
+        updated = False
         for txn in transactions:
             acc_id = txn.unique_account_id
-            if acc_id and acc_id not in known_ids and acc_id not in new_accounts:
-                # Create minimal Account
+            if not acc_id:
+                continue
+            
+            # Extract potential new number from transaction raw data
+            # Adjust key if necessary based on what _parse_rbc_csv puts in raw_data
+            new_number = str(txn.raw_data.get('Account Number', ''))
+            
+            if acc_id in known_accounts:
+                # Check if we should update the existing account
+                existing_acc = known_accounts[acc_id]
+                current_number = existing_acc.account_number
+                
+                if self._is_better_account_number(current_number, new_number, acc_id):
+                    print(f"Updating account {acc_id}: Number changed from '{current_number}' to '{new_number}'")
+                    existing_acc.account_number = new_number
+                    updated = True
+            else:
+                # Create new account
                 acc = Account({}, acc_id)
                 acc.account_name = txn.account_name
                 acc.currency = txn.currency
-                # Try to extract account number from raw data if available (common pattern)
-                if 'Account Number' in txn.raw_data:
-                     acc.account_number = str(txn.raw_data['Account Number'])
+                if new_number:
+                    acc.account_number = new_number
                 
-                new_accounts[acc_id] = acc
+                known_accounts[acc_id] = acc
+                updated = True
         
-        if new_accounts:
-            print(f"Found {len(new_accounts)} new account(s) from transactions. Updating accounts.csv...")
-            self._append_accounts_to_csv(list(new_accounts.values()))
+        if updated:
+            print(f"Saving updated accounts list to {accounts_file}...")
+            self.save_accounts(list(known_accounts.values()))
 
-    def _append_accounts_to_csv(self, new_accounts: List[Account]):
-        """Append new accounts to the accounts file."""
-        import csv
-        accounts_file = self.config.output_dir / self.get_bank_name() / "accounts.csv"
+    def _is_better_account_number(self, existing: str, new: str, unique_id: str = None) -> bool:
+        """
+        Determine if the 'new' account number is better than the 'existing' one.
+        Better means:
+        1. Existing is empty/None, and New is not.
+        2. Existing contains masked characters ('*') and New does not.
+        3. New is longer than Existing (and not masked), assuming more detail.
         
-        # Ensure directory exists
-        accounts_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        rows = [acc.to_csv_row() for acc in new_accounts]
-        
-        # If file doesn't exist, we need to write header
-        file_exists = accounts_file.exists()
-        
-        fieldnames = ['Unique Account ID', 'Account Name', 'Account Number', 'Currency', 'Type', 'Status', 'Created At']
-        
-        try:
-            with open(accounts_file, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerows(rows)
-            print(f"Appended {len(rows)} new account(s) to {accounts_file}")
-        except Exception as e:
-            print(f"Error appending accounts to CSV: {e}")
+        EXCEPTION: If existing matches unique_id (e.g. RBC-XXXX), we prefer that format
+        and do NOT update it, even if new is longer/unmasked.
+        """
+        if not new or new.strip() == '':
+            return False
+        if not existing or existing.strip() == '':
+            return True
+            
+        # If existing matches unique_id, keep it (User preference for RBC-XXXX format)
+        if unique_id and existing == unique_id:
+            return False
+            
+        # If existing is masked and new is not
+        if '*' in existing and '*' not in new:
+            return True
+            
+        # If both are unmasked (or both masked), prefer the longer one?
+        # Usually full number is longer than masked if masked is truncated, 
+        # but sometimes masked is same length. 
+        # If we have a full number vs a partial number, full is better.
+        if '*' not in new and len(new) > len(existing):
+            return True
+            
+        return False
 
     def save_accounts(self, accounts: List[Account]):
         """Save accounts to CSV."""
@@ -233,7 +264,13 @@ class BankDownloader(ABC):
     def teardown(self):
         """Close browser context."""
         if self.context:
-            self.context.close()
+            try:
+                self.context.close()
+                # Give the browser process a moment to fully release file locks
+                import time
+                time.sleep(2)
+            except Exception as e:
+                print(f"Warning: Error closing context: {e}")
 
     @abstractmethod
     def get_bank_name(self) -> str:

@@ -91,6 +91,21 @@ class BMODownloader(BankDownloader):
             acc.type = "Credit Card"
             acc.currency = "CAD" # Assumption
             
+            # Map Current Balance
+            balance_str = acc_dict.get('balance')
+            if balance_str:
+                # If string contains $, it likely has garbage before it (like "Mastercard8733 , $898.70")
+                if '$' in balance_str:
+                    balance_str = balance_str.split('$')[-1]
+                
+                # Clean string (remove $, commas, whitespace)
+                import re
+                clean_bal = re.sub(r'[^\d.-]', '', balance_str)
+                try:
+                    acc.current_balance = float(clean_bal)
+                except (ValueError, TypeError):
+                    pass
+            
             accounts.append(acc)
             
         return accounts
@@ -120,6 +135,14 @@ class BMODownloader(BankDownloader):
                 
                 current_url = self.page.url
                 print(f"  Current URL: {current_url}")
+                
+                # Scrape accurate balance from details page
+                details_balance = self._scrape_details_balance()
+                if details_balance is not None:
+                    print(f"  Updated balance from details page: {details_balance}")
+                    account.current_balance = details_balance
+                    # Update accounts.csv immediately
+                    self.save_accounts(accounts)
                 
                 # BMO API doesn't allow date ranges that cross calendar years
                 # Fetch transactions by calendar year
@@ -206,8 +229,32 @@ class BMODownloader(BankDownloader):
                             const numberElement = item.querySelector('.account-number');
                             const number = numberElement ? numberElement.textContent.trim() : '';
                             
+                            // Extract balance
+                            // Try multiple selectors as we don't have the exact DOM
+                            let balance = null;
+                            const balanceSelectors = ['.account-balance', '.balance', '.amount', '[data-test-id="account-balance"]'];
+                            
+                            for (const selector of balanceSelectors) {
+                                const el = item.querySelector(selector);
+                                if (el) {
+                                    balance = el.textContent.trim();
+                                    break;
+                                }
+                            }
+                            
+                            // Fallback: look for text containing '$'
+                            if (!balance) {
+                                const spans = item.querySelectorAll('span, div');
+                                for (const span of spans) {
+                                    if (span.textContent.includes('$') && span.textContent.replace(/[^\d.]/g, '').length > 0) {
+                                        balance = span.textContent.trim();
+                                        break;
+                                    }
+                                }
+                            }
+
                             if (name && number) {
-                                accounts.push({ name, number });
+                                accounts.push({ name, number, balance });
                             }
                         });
                         
@@ -491,3 +538,30 @@ class BMODownloader(BankDownloader):
         
         print(f"Parsed {len(transactions)} posted transactions")
         return transactions
+
+    def _scrape_details_balance(self) -> float:
+        """Scrape balance from the account details page."""
+        try:
+            # Use the selector provided by user
+            # .current-balance-container-desktop-tablet .fdc-heading1
+            balance_str = self.page.evaluate("""
+                () => {
+                    const el = document.querySelector('.current-balance-container-desktop-tablet .fdc-heading1');
+                    return el ? el.textContent.trim() : null;
+                }
+            """)
+            
+            if balance_str:
+                # Same cleaning logic as before just in case
+                if '$' in balance_str:
+                    balance_str = balance_str.split('$')[-1]
+                
+                import re
+                clean_bal = re.sub(r'[^\d.-]', '', balance_str)
+                try:
+                    return float(clean_bal)
+                except ValueError:
+                    return None
+        except Exception as e:
+            print(f"Error scraping details balance: {e}")
+        return None

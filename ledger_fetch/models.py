@@ -186,6 +186,7 @@ class Account(BaseModel):
         'Currency',
         'Type',
         'Status',
+        'Current Balance',
         'Created At'
     ]
 
@@ -242,6 +243,14 @@ class Account(BaseModel):
         self.set('Status', value)
 
     @property
+    def current_balance(self) -> float:
+        return self.get('Current Balance', 0.0)
+
+    @current_balance.setter
+    def current_balance(self, value: float):
+        self.set('Current Balance', value)
+
+    @property
     def created_at(self) -> str:
         return self.get('Created At', '')
 
@@ -257,5 +266,6 @@ class Account(BaseModel):
             'Currency': self.currency,
             'Type': self.type,
             'Status': self.status,
+            'Current Balance': self.current_balance,
             'Created At': self.created_at
         }

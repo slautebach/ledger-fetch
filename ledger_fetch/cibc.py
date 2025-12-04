@@ -100,6 +100,11 @@ class CIBCDownloader(BankDownloader):
         """Scrape accounts from the dashboard."""
         print("Scanning for accounts...")
         # Selector based on user provided HTML: a[data-test-id^="account-card-account-name-link-"]
+        # We'll look for card containers to get both name and balance
+        # Assuming .card-container or similar wrapper exists as per login check
+        
+        # Fallback to links if containers not found easily, but try to find containers first
+        # We can iterate over links and find parent
         account_links = self.page.query_selector_all('a[data-test-id^="account-card-account-name-link-"]')
         
         accounts = []
@@ -117,6 +122,40 @@ class CIBCDownloader(BankDownloader):
                 acc.account_name = name
                 acc.type = "Credit Card" if "credit-cards" in href else "Bank Account"
                 acc.currency = "CAD" # Assumption
+                
+                # Try to find balance
+                # Navigate up to find the card container
+                try:
+                    # This is a bit hacky without exact DOM, but we can try to find a sibling with currency
+                    # or use JS to find the parent card
+                    balance = self.page.evaluate("""
+                        (link) => {
+                            // Find closest card container
+                            const card = link.closest('div[class*="card"]'); 
+                            if (!card) return null;
+                            
+                            // Look for balance
+                            // Common selectors: .balance, .amount, or just text with $
+                            const balanceEl = card.querySelector('.balance-amount, .account-balance, [class*="balance"]');
+                            if (balanceEl) return balanceEl.textContent.trim();
+                            
+                            // Fallback: scan all elements
+                            const all = card.querySelectorAll('*');
+                            for (const el of all) {
+                                if (el.textContent.includes('$') && el.textContent.length < 20) {
+                                    return el.textContent.trim();
+                                }
+                            }
+                            return null;
+                        }
+                    """, link)
+                    
+                    if balance:
+                        import re
+                        clean_bal = re.sub(r'[^\d.-]', '', balance)
+                        acc.current_balance = float(clean_bal)
+                except Exception as e:
+                    print(f"Warning: Could not scrape balance for {name}: {e}")
                 
                 accounts.append(acc)
                 print(f"Found account: {name} (ID: {acc_id})")
@@ -175,6 +214,22 @@ class CIBCDownloader(BankDownloader):
                 print(f"Navigating to {target_url}")
                 self.page.goto(target_url)
                 self.page.wait_for_timeout(3000) # Wait for load
+                
+                # Scrape balance from details page
+                try:
+                    # Selector based on user provided HTML:
+                    # <li class="current-balance first"> ... <span class="align-right"><span>$999.50</span></span> ... </li>
+                    balance_el = self.page.query_selector("li.current-balance .align-right span")
+                    if balance_el:
+                        balance_text = balance_el.inner_text()
+                        import re
+                        clean_bal = re.sub(r'[^\d.-]', '', balance_text)
+                        if clean_bal:
+                            acc.current_balance = float(clean_bal)
+                            print(f"  Scraped balance: {acc.current_balance}")
+                except Exception as e:
+                    print(f"  Warning: Could not scrape balance from details page: {e}")
+
             except Exception as e:
                 print(f"Error navigating to account: {e}")
                 continue
@@ -186,6 +241,9 @@ class CIBCDownloader(BankDownloader):
             # Pause briefly between accounts
             time.sleep(2)
             
+        # Save accounts again to update with scraped balances
+        self.save_accounts(accounts)
+
         return all_transactions
 
     def _fetch_transactions_for_account(self, account: Account, captured_auth: Dict[str, Any]) -> List[Transaction]:

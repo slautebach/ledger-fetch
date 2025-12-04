@@ -126,6 +126,15 @@ class CanadianTireDownloader(BankDownloader):
                         acc.type = "Credit Card"
                         acc.currency = "CAD"
                         
+                        # Map Current Balance
+                        # Check various potential keys
+                        balance = card.get("balance") or card.get("currentBalance") or card.get("accountBalance")
+                        if balance is not None:
+                            try:
+                                acc.current_balance = float(balance)
+                            except (ValueError, TypeError):
+                                pass
+                        
                         accounts.append(acc)
                         
                 except json.JSONDecodeError as e:
@@ -133,6 +142,32 @@ class CanadianTireDownloader(BankDownloader):
                     
         except Exception as e:
             print(f"Error fetching accounts: {e}")
+
+        # Scrape Current Balance from Summary Page
+        if accounts:
+            print("Navigating to Summary page to scrape balance...")
+            try:
+                self.page.goto("https://www.ctfs.com/content/dash/en/private/Summary.html", wait_until="domcontentloaded")
+                self.page.wait_for_selector(".balance-section .current .amount", timeout=15000)
+                
+                balance_text = self.page.inner_text(".balance-section .current .amount")
+                # Expected format: "$1,584.55"
+                # Remove '$', ',' and whitespace
+                clean_balance = balance_text.replace('$', '').replace(',', '').strip()
+                # Handle potential newlines if any
+                clean_balance = clean_balance.split('\n')[0].strip()
+                
+                current_balance = float(clean_balance)
+                print(f"Scraped current balance: {current_balance}")
+                
+                # Assign to the first account
+                accounts[0].current_balance = current_balance
+                
+            except Exception as e:
+                print(f"Warning: Could not scrape balance from Summary page: {e}")
+            finally:
+                # Ensure we return to the details page for transaction fetching
+                self.navigate_to_transactions()
             
         return accounts
 

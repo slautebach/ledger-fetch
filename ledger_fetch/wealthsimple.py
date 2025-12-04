@@ -142,7 +142,15 @@ class WealthsimpleDownloader(BankDownloader):
             # Extra fields
             acc.raw_data['Status'] = acc_data.get('status')
             acc.raw_data['Unified Type'] = acc_data.get('unifiedAccountType')
-            acc.raw_data['Net Value'] = acc_data.get('financials', {}).get('currentCombined', {}).get('netLiquidationValue', {}).get('amount')
+            net_val = acc_data.get('financials', {}).get('currentCombined', {}).get('netLiquidationValue', {}).get('amount')
+            acc.raw_data['Net Value'] = net_val
+            
+            # Map Current Balance
+            if net_val is not None:
+                try:
+                    acc.current_balance = float(net_val)
+                except (ValueError, TypeError):
+                    pass
             acc.raw_data['Net Deposits'] = acc_data.get('financials', {}).get('currentCombined', {}).get('netDeposits', {}).get('amount')
             acc.raw_data['Created At'] = acc_data.get('createdAt')
             
