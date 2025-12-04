@@ -113,8 +113,20 @@ class TransactionNormalizer:
             
         try:
             # Try common formats
-            # Added: %d %b %Y (01 Aug 2025), %d %b %Y (1 Aug 2025)
-            for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y/%m/%d', '%b %d, %Y', '%d %b %Y', '%d %b %Y']:
+            # Added: %d %b %Y (01 Aug 2025), %d %b %Y (1 Aug 2025), %B %d, %Y (August 1, 2025)
+            formats = [
+                '%Y-%m-%d', 
+                '%m/%d/%Y', 
+                '%d/%m/%Y', 
+                '%Y/%m/%d', 
+                '%b %d, %Y', 
+                '%d %b %Y', 
+                '%B %d, %Y',
+                '%Y-%m-%dT%H:%M:%S', # ISO with time
+                '%Y-%m-%dT%H:%M:%S.%f' # ISO with microseconds
+            ]
+            
+            for fmt in formats:
                 try:
                     dt = datetime.strptime(str(date_str), fmt)
                     return dt.strftime('%Y-%m-%d')
@@ -125,8 +137,15 @@ class TransactionNormalizer:
             if hasattr(date_str, 'strftime'):
                 return date_str.strftime('%Y-%m-%d')
                 
+            # If we get here, we couldn't parse it. 
+            # Check if it already looks like YYYY-MM-DD
+            if re.match(r'^\d{4}-\d{2}-\d{2}$', str(date_str)):
+                return str(date_str)
+
+            print(f"Warning: Could not normalize date '{date_str}'")
             return str(date_str)
-        except Exception:
+        except Exception as e:
+            print(f"Error normalizing date '{date_str}': {e}")
             return str(date_str)
 
     @staticmethod

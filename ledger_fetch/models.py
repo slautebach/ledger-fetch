@@ -96,7 +96,8 @@ class Transaction(BaseModel):
 
     @date.setter
     def date(self, value: str):
-        self.set('Date', value)
+        from .utils import TransactionNormalizer
+        self.set('Date', TransactionNormalizer.normalize_date(value))
 
     @property
     def description(self) -> str:

@@ -68,24 +68,27 @@ class RBCDownloader(BankDownloader):
             
             # Helper to extract name
             def get_name(acc):
+                if not acc: return 'Unknown Account'
                 nick = acc.get('nickName')
                 if nick: return nick
-                prod = acc.get('product', {})
+                prod = acc.get('product') or {}
                 return prod.get('productName', 'Unknown Account')
 
             # Helper to extract currency
             def get_currency(acc):
-                curr = acc.get('accountCurrency', {})
+                if not acc: return 'CAD'
+                curr = acc.get('accountCurrency') or {}
                 return curr.get('currencyCode', 'CAD')
 
             # Process Deposit Accounts
             if 'depositAccounts' in data and isinstance(data['depositAccounts'], dict):
                 da_list = data['depositAccounts'].get('accounts', [])
                 for acc in da_list:
+                    if not acc: continue
                     # Use Account Number as Unique ID
                     acc_num = acc.get('accountNumber')
                     if acc_num:
-                        unique_id = f"RBC-{str(acc_num)[-4:]}"
+                        unique_id = f"RBC-{acc_num}"
                     else:
                          unique_id = acc.get('encryptedAccountNumber')
                     
@@ -108,10 +111,11 @@ class RBCDownloader(BankDownloader):
             if 'creditCards' in data and isinstance(data['creditCards'], dict):
                 cc_list = data['creditCards'].get('accounts', [])
                 for acc in cc_list:
+                    if not acc: continue
                     # Use Account Number as Unique ID
                     acc_num = acc.get('accountNumber')
                     if acc_num:
-                        unique_id = f"RBC-{str(acc_num)[-4:]}"
+                        unique_id = f"RBC-{acc_num}"
                     else:
                          unique_id = acc.get('encryptedAccountNumber')
 
@@ -127,6 +131,83 @@ class RBCDownloader(BankDownloader):
                     account.account_name = get_name(acc)
                     account.account_number = acc.get('accountNumber', '')
                     account.type = 'CreditCard'
+                    account.currency = get_currency(acc)
+                    accounts.append(account)
+
+            # Process Lines and Loans (Home Line Plan)
+            if 'linesLoans' in data and isinstance(data['linesLoans'], dict):
+                ll_list = data['linesLoans'].get('accounts', [])
+                for acc in ll_list:
+                    if not acc: continue
+                    acc_num = acc.get('accountNumber')
+                    if acc_num:
+                        unique_id = f"RBC-{acc_num}"
+                    else:
+                         unique_id = acc.get('encryptedAccountNumber')
+
+                    account = Account(acc, unique_id)
+                    
+                    current_balance = acc.get('currentBalance')
+                    if current_balance is not None:
+                        try:
+                            account.current_balance = float(current_balance)
+                        except (ValueError, TypeError):
+                            pass
+                    account.account_name = get_name(acc)
+                    account.account_number = acc.get('accountNumber', '')
+                    account.type = 'LineLoan'
+                    account.currency = get_currency(acc)
+                    accounts.append(account)
+
+            # Process Mortgages
+            if 'mortgages' in data and isinstance(data['mortgages'], dict):
+                mtg_list = data['mortgages'].get('accounts', [])
+                for acc in mtg_list:
+                    if not acc: continue
+                    acc_num = acc.get('accountNumber')
+                    if acc_num:
+                        unique_id = f"RBC-{acc_num}"
+                    else:
+                         unique_id = acc.get('encryptedAccountNumber')
+
+                    account = Account(acc, unique_id)
+                    
+                    current_balance = acc.get('currentBalance')
+                    if current_balance is not None:
+                        try:
+                            account.current_balance = float(current_balance)
+                        except (ValueError, TypeError):
+                            pass
+                    account.account_name = get_name(acc)
+                    account.account_number = acc.get('accountNumber', '')
+                    account.type = 'Mortgage'
+                    account.currency = get_currency(acc)
+                    accounts.append(account)
+
+            # Process Investments
+            if 'investments' in data and isinstance(data['investments'], dict):
+                inv_list = data['investments'].get('accounts', [])
+                for acc in inv_list:
+                    if not acc: continue
+                    acc_num = acc.get('accountNumber')
+                    if acc_num:
+                        unique_id = f"RBC-{acc_num}"
+                    else:
+                         unique_id = acc.get('encryptedAccountNumber')
+
+                    account = Account(acc, unique_id)
+                    
+                    # Investments might be closed or have null balance
+                    current_balance = acc.get('currentBalance')
+                    if current_balance is not None:
+                        try:
+                            account.current_balance = float(current_balance)
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    account.account_name = get_name(acc)
+                    account.account_number = acc.get('accountNumber', '')
+                    account.type = 'Investment'
                     account.currency = get_currency(acc)
                     accounts.append(account)
             
@@ -152,14 +233,25 @@ class RBCDownloader(BankDownloader):
         service_path = "transactions/pda/account"
         if account.type == 'CreditCard':
             service_path = "transactions/cc/posted/account"
+        elif account.type == 'Deposit':
+            service_path = "transactions/pda/account"
+        else:
+            print(f"  Skipping API fetch for {account.type} (relying on CSV fallback)")
+            return []
             
         # Base URL (try -dbb first as per HAR)
         base_url = "https://www1.royalbank.com/sgw5/digital/transaction-presentation-service-v3-dbb/v3"
         
         # Query params
-        params = f"intervalType=DAY&intervalValue={days}&type=ALL"
-        if account.type == 'Deposit':
-            params += "&txType=pda&useColtOnly=response"
+        if account.type == 'CreditCard':
+             # Use parameters observed in HAR for Credit Cards
+             # Note: We might want to fetch both posted and pending, but for now let's stick to posted as per user example
+             params = f"billingStatus=posted&txType=postedCreditCard&timestamp={int(time.time()*1000)}"
+        elif account.type == 'Deposit':
+            params = f"intervalType=DAY&intervalValue={days}&type=ALL&txType=pda&useColtOnly=response"
+        else:
+             # Should not happen due to check above
+             return []
         
         url = f"{base_url}/{service_path}/{encrypted_id}?{params}"
         
@@ -274,7 +366,7 @@ class RBCDownloader(BankDownloader):
                 # Logic: Use Account Number
                 num = acc.account_number
                 if num:
-                    api_account_ids.add(f"RBC-{str(num)[-4:]}")
+                    api_account_ids.add(f"RBC-{num}")
 
             for txn in csv_txns:
                 # txn is a Transaction object
@@ -283,7 +375,7 @@ class RBCDownloader(BankDownloader):
                 # Generate ID for this CSV transaction's account
                 # Use Account Number directly
                 if acc_num:
-                    csv_acc_id = f"RBC-{str(acc_num)[-4:]}"
+                    csv_acc_id = f"RBC-{acc_num}"
                 else:
                     csv_acc_id = "RBC-UNKNOWN"
                 
@@ -296,75 +388,16 @@ class RBCDownloader(BankDownloader):
         except Exception as e:
             print(f"CSV Download failed: {e}")
             
-        time.sleep(2)
-
-        print("Looking for Download Transactions link...")
-        
-        download_link = None
-        if self.page.get_by_text("Download", exact=False).count():
-            download_link = self.page.get_by_text("Download", exact=False).first
-        elif self.page.locator('a[href*="downloadTransactions"]').count():
-            download_link = self.page.locator('a[href*="downloadTransactions"]').first
-        
-        if not download_link:
-            print("Could not find Download link on Account Services page.")
-            return []
-            
-        print("Clicking Download Transactions link...")
-        download_link.click()
-        self.page.wait_for_load_state('networkidle')
-        time.sleep(2)
-        
-        # Select CSV format
-        print("Selecting CSV format...")
-        csv_radio = self.page.query_selector('input#Excel')
-        if csv_radio:
-            csv_radio.click()
-            time.sleep(0.5)
-            
-        # Select "All accounts"
-        print("Selecting all accounts...")
-        account_select = self.page.query_selector('select#accountInfo')
-        if account_select:
-            account_select.select_option(index=0)
-            time.sleep(0.5)
-            
-        # Select "All transactions on file"
-        print("Selecting all transactions on file...")
-        transaction_select = self.page.query_selector('select#transactionDropDown')
-        if transaction_select:
-            options = transaction_select.query_selector_all('option')
-            if options:
-                transaction_select.select_option(index=len(options) - 1)
-                time.sleep(0.5)
-                
-        # Click Continue
-        print("Downloading transactions...")
-        continue_button = self.page.query_selector('a#id_btn_continue')
-        if not continue_button:
-            print("Continue button not found.")
-            return []
-            
-        try:
-            print("Waiting before clicking download...")
-            time.sleep(2)
-            with self.page.expect_download(timeout=60000) as download_info:
-                continue_button.click()
-                
-            download = download_info.value
-            download_path = download.path()
-            
-            # Parse the downloaded file
-            return self._parse_rbc_csv(download_path)
-        except Exception as e:
-            print(f"Error during file download: {e}")
-            return []
+        return all_transactions
 
     def download_transactions_csv(self) -> List[Transaction]:
         """Download CSV and parse it (Legacy Method)."""
         print("Navigating to Account Services page for CSV download...")
-        self.page.goto("https://www1.royalbank.com/sgw1/olb/index-en/#/account-services")
-        self.page.wait_for_load_state('networkidle')
+        try:
+            self.page.goto("https://www1.royalbank.com/sgw1/olb/index-en/#/account-services", timeout=60000)
+            self.page.wait_for_load_state('networkidle', timeout=60000)
+        except Exception as e:
+            print(f"Navigation warning (continuing): {e}")
         time.sleep(2)
 
         print("Looking for Download Transactions link...")
@@ -476,7 +509,7 @@ class RBCDownloader(BankDownloader):
                             except: pass
                             
                     # Generate IDs
-                    unique_account_id = f"RBC-{str(acc_number)[-4:]}" if acc_number else "RBC-UNKNOWN"
+                    unique_account_id = f"RBC-{acc_number}" if acc_number else "RBC-UNKNOWN"
                     unique_trans_id = TransactionNormalizer.generate_transaction_id(date, amount, description, unique_account_id)
                     
                     # Create Transaction
