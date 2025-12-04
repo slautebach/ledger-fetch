@@ -42,6 +42,10 @@ class Config(BaseSettings):
         default=Path("payee_rules.yaml"),
         description="Path to the payee normalization rules file"
     )
+    debug: bool = Field(
+        default=False,
+        description="Enable debug mode (HAR recording, verbose logging, pause on error)"
+    )
     
     # Bank specific configs
     rbc: BankConfig = Field(default_factory=BankConfig)

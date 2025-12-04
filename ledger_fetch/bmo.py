@@ -28,6 +28,10 @@ class BMODownloader(BankDownloader):
     def login(self):
         """Navigate to login page and wait for manual login."""
         print("Navigating to BMO login page...")
+        # Forward console logs to Python stdout for debugging
+        if self.config.debug:
+            self.page.on("console", lambda msg: print(f"BROWSER CONSOLE: {msg.text}"))
+        
         self.page.goto("https://www1.bmo.com/banking/digital/login?lang=en")
         
         print("\nWaiting for user to log in to BMO...")
@@ -124,14 +128,7 @@ class BMODownloader(BankDownloader):
                 current_date = datetime.now()
                 current_year = current_date.year
                 
-                print("\n" + "="*60)
-                print("PAUSED: Ready to fetch transactions")
-                print("1. Open browser DevTools (F12)")
-                print("2. Go to Network tab")
-                print("3. Ensure 'Preserve log' is checked")
-                print("4. Press Enter here to start the API calls")
-                print("="*60)
-                input("Press Enter to continue...")
+
                 
                 # Fetch current year (from Jan 1 to today)
                 from_date_str = f"{current_year}-01-01"
@@ -153,15 +150,7 @@ class BMODownloader(BankDownloader):
                 
                 print(f"  Total transactions for this account: {len(all_account_transactions)}")
                 
-                print("\n" + "="*60)
-                print("PAUSED: API calls completed")
-                print("You can now:")
-                print("1. Open browser DevTools (F12)")
-                print("2. Go to Network tab")
-                print("3. Look for the API calls to see request/response")
-                print("4. Check what went wrong (if anything)")
-                print("="*60)
-                input("Press Enter when ready to continue...")
+
                 
                 all_transactions.extend(all_account_transactions)
                 
@@ -303,6 +292,12 @@ class BMODownloader(BankDownloader):
                 }
             }
             
+            if self.config.debug:
+                print(f"DEBUG: API Request Payload for {from_date} to {to_date}:")
+                print(json.dumps(post_data, indent=2))
+
+
+            
             # Make API call using page.evaluate to maintain session
             result = self.page.evaluate("""
                 async (params) => {
@@ -385,11 +380,26 @@ class BMODownloader(BankDownloader):
             
             if "error" in result:
                 print(f"API fetch error: {result['error']}")
+                if self.config.debug:
+                    print("!"*60)
+                    print("API EXECUTION ERROR")
+                    print("The JavaScript code failed to execute properly.")
+                    print("Check the BROWSER CONSOLE logs above for details.")
+                    print("!"*60)
+                    input("Press Enter to continue (and likely fail)...")
                 return []
                 
             if not result.get("ok"):
-                print(f"API error: {result.get('status')}")
-                print(f"Response: {result.get('text', '')[:500]}")
+                print(f"API error status: {result.get('status')}")
+                if self.config.debug:
+                    print(f"Response text preview: {result.get('text', '')[:1000]}")
+                    print("!"*60)
+                    print("API REQUEST FAILED (Non-200 Status)")
+                    print("1. Check the Network tab in the browser.")
+                    print("2. Look for the failed request.")
+                    print("3. Check the recorded HAR file.")
+                    print("!"*60)
+                    input("Press Enter to continue (and likely fail)...")
                 return []
                 
             json_response = json.loads(result.get("text", "{}"))

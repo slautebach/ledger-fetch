@@ -47,6 +47,19 @@ class BankDownloader(ABC):
                 accounts = self.fetch_accounts()
                 if accounts:
                     self.save_accounts(accounts)
+                if accounts:
+                    self.save_accounts(accounts)
+            except Exception as e:
+                if self.config.debug:
+                    print(f"\n{'='*60}")
+                    print(f"CRITICAL ERROR: {e}")
+                    print("The browser is still open for debugging.")
+                    print("Network traffic has been recorded to the HAR file.")
+                    print(f"{'='*60}\n")
+                    import traceback
+                    traceback.print_exc()
+                    input("Press Enter to close the browser and exit...")
+                raise e
             finally:
                 self.teardown()
 
@@ -63,13 +76,25 @@ class BankDownloader(ABC):
         # Ensure profile directory exists
         self.config.browser_profile_path.mkdir(parents=True, exist_ok=True)
         
-        self.context = self.playwright.chromium.launch_persistent_context(
-            user_data_dir=str(self.config.browser_profile_path),
-            channel="chrome",
-            headless=self.config.headless,
-            accept_downloads=True,
-            args=["--disable-blink-features=AutomationControlled"]
-        )
+        launch_args = {
+            "user_data_dir": str(self.config.browser_profile_path),
+            "channel": "chrome",
+            "headless": self.config.headless,
+            "accept_downloads": True,
+            "args": ["--disable-blink-features=AutomationControlled"]
+        }
+
+        # Setup HAR recording if debug is enabled
+        if self.config.debug:
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            har_dir = self.config.output_dir / "debug_logs"
+            har_dir.mkdir(parents=True, exist_ok=True)
+            har_path = har_dir / f"{self.get_bank_name()}_{timestamp}.har"
+            print(f"Network traffic will be recorded to: {har_path}")
+            launch_args["record_har_path"] = str(har_path)
+        
+        self.context = self.playwright.chromium.launch_persistent_context(**launch_args)
         self.context.set_default_timeout(self.config.timeout)
         self.page = self.context.new_page()
 

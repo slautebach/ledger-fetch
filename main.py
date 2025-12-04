@@ -100,6 +100,11 @@ def main():
         action="store_true",
         help="Run payee normalization on existing transaction files without downloading"
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode (HAR recording, verbose logging, pause on error)"
+    )
     
     args = parser.parse_args()
     
@@ -115,6 +120,8 @@ def main():
     # Update config from args
     if args.headless:
         settings.headless = True
+    if args.debug:
+        settings.debug = True
         
     print(f"Starting Ledger Fetch...")
     print(f"Output directory: {settings.output_dir.resolve()}")
@@ -139,7 +146,8 @@ def main():
         except Exception as e:
             print(f"\n❌ {name.upper()} failed: {e}")
             # Continue to next downloader even if one fails
-            
+
+    run_normalization()        
     print("\nAll tasks completed.")
 
 if __name__ == "__main__":
