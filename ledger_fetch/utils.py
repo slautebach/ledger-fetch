@@ -44,23 +44,34 @@ class TransactionNormalizer:
         import yaml
         
         rules_path = settings.payee_rules_path
-        if not rules_path.is_absolute():
-            # Try finding it relative to current working directory first
-            if not rules_path.exists():
-                 # Fallback to package directory if needed, or just keep as is
-                 pass
-
+        # Ensure path is absolute if possible, or relative to CWD
+        
         cls._payee_rules = []
+        
         if rules_path.exists():
-            try:
-                with open(rules_path, 'r', encoding='utf-8') as f:
-                    data = yaml.safe_load(f)
-                    if data and 'rules' in data:
-                        cls._payee_rules = data['rules']
-            except Exception as e:
-                print(f"Warning: Failed to load payee rules from {rules_path}: {e}")
+            if rules_path.is_dir():
+                # Load all .yaml and .yml files in the directory
+                for file_path in sorted(rules_path.glob("*.y*ml")):
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            data = yaml.safe_load(f)
+                            if data and 'rules' in data:
+                                cls._payee_rules.extend(data['rules'])
+                                print(f"Loaded {len(data['rules'])} rules from {file_path.name}")
+                    except Exception as e:
+                         print(f"Warning: Failed to load payee rules from {file_path}: {e}")
+            else:
+                # Load single file
+                try:
+                    with open(rules_path, 'r', encoding='utf-8') as f:
+                        data = yaml.safe_load(f)
+                        if data and 'rules' in data:
+                            cls._payee_rules = data['rules']
+                            print(f"Loaded {len(data['rules'])} rules from {rules_path.name}")
+                except Exception as e:
+                    print(f"Warning: Failed to load payee rules from {rules_path}: {e}")
         else:
-            print(f"Warning: Payee rules file not found at {rules_path}")
+            print(f"Warning: Payee rules path not found at {rules_path}")
             
         return cls._payee_rules
 
@@ -70,7 +81,8 @@ class TransactionNormalizer:
         Normalize payee name based on configured rules.
         
         Applies a 'First Match Wins' strategy using the rules defined in
-        payee_rules.yaml. If no rule matches, returns the cleaned original payee.
+        payee_rules.yaml. Supports both simple keywords (substring match)
+        and regex patterns.
         """
         if not raw_payee:
             return ""
@@ -80,23 +92,21 @@ class TransactionNormalizer:
         
         for rule in rules:
             name = rule.get('name')
-            patterns = rule.get('patterns', [])
             
-            for pattern in patterns:
-                # Check for regex prefix
-                if pattern.startswith("regex:"):
-                    regex_pattern = pattern[6:]
-                    try:
-                        if re.search(regex_pattern, cleaned, re.IGNORECASE):
-                            return name
-                    except re.error:
-                        # Log warning only if verbose? For now, just skip invalid regex
-                        print(f"Warning: Invalid regex pattern '{regex_pattern}' for rule '{name}'")
-                        continue
-                        
-                # Simple case-insensitive substring match
-                elif pattern.lower() in cleaned.lower():
-                    return name
+            # 1. Simple Keywords (Preferred for speed/simplicity)
+            keywords = rule.get('keywords') or []
+            for keyword in keywords:
+                 if keyword.lower() in cleaned.lower():
+                     return name
+
+            # 2. Regex Patterns
+            regexes = rule.get('regex') or []
+            for pattern in regexes:
+                try:
+                    if re.search(pattern, cleaned, re.IGNORECASE):
+                        return name
+                except re.error:
+                    print(f"Warning: Invalid regex pattern '{pattern}' for rule '{name}'")
                     
         return cleaned
 

@@ -181,7 +181,7 @@ class WealthsimpleDownloader(BankDownloader):
             print(f"Processing account: {account.account_name} ({account.unique_account_id})")
             
             try:
-                activities = self.ws.get_activities(account.unique_account_id)
+                activities = self.ws.get_activities(account.unique_account_id, load_all=True)
                 if isinstance(activities, dict) and 'results' in activities:
                     activities = activities['results']
                 

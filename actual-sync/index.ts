@@ -303,7 +303,7 @@ async function main() {
                 const payee = tx['Payee Name'] || tx['Payee'] || tx['Description'];
 
                 // Notes: Use 'Notes' if available
-                let notes = tx['Notes'] || '';
+                let notes = tx['Notes'] || tx['Description'] || '';
                 
                 // Append Transfer status to notes
                 if (tx['Is Transfer'] === 'True' || tx['Is Transfer'] === 'true' || tx['Is Transfer'] === '1') {

@@ -44,8 +44,8 @@ class Config(BaseSettings):
         description="Default timeout for browser actions in milliseconds"
     )
     payee_rules_path: Path = Field(
-        default=Path("payee_rules.yaml"),
-        description="Path to the payee normalization rules file"
+        default=Path("payee_rules"),
+        description="Path to the payee normalization rules file or directory"
     )
     debug: bool = Field(
         default=False,

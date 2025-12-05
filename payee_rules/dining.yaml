@@ -1,0 +1,108 @@
+rules:
+- name: "A&W"
+  keywords:
+  - "A & W"
+  - "A&W"
+- name: "Baja Burger Shack"
+  keywords:
+  - "BAJA BURGER SHACK"
+- name: "Baskin Robbins"
+  keywords:
+  - "BASKIN ROBBINS"
+- name: "Baton Rouge"
+  keywords:
+  - "BATON ROUGE"
+- name: "Big Bone BBQ"
+  keywords:
+  - "BIG BONE BBQ"
+- name: "Big Rig Kitchen"
+  keywords:
+  - "BIG RIG KITCHEN"
+- name: "Booster Juice"
+  keywords:
+  - "BOOSTER JUICE"
+- name: "Bulk Barn"
+  keywords:
+  - "Bulk Barn"
+- name: "Cashew and Clive - Metro Center Toronto"
+  keywords:
+  - "CASHEW AND CLIVE - METR Toronto"
+- name: "Chefs Plate"
+  keywords:
+  - "CHEFSPLATE"
+- name: "Chocolato"
+  keywords:
+  - "CHOCOLATO"
+- name: "Chungchun Ricedog"
+  keywords:
+  - "CHUNGCHUN RICEDOG"
+- name: "Columbus Cafe"
+  keywords:
+  - "COLUMBUS CAFE"
+- name: "Currah'S Cafe And Cate"
+  keywords:
+  - "CURRAH'S CAFE AND CATE PICTON ON"
+- name: "D Spot Dessert Cafe"
+  keywords:
+  - "D SPOT DESSERT"
+- name: "Dairy Queen"
+  keywords:
+  - "DAIRY QUEEN"
+- name: "Domino's Pizza"
+  keywords:
+  - "DOMINOS PIZZA"
+- name: "Finnigan's Tavern"
+  keywords:
+  - "FINNIGAN'S TAVERN"
+- name: "KFC"
+  keywords:
+  - "KFC"
+- name: "Lucille's Restaurant"
+  keywords:
+  - "RESTAURANT LUCILLE"
+- name: "Mandarin"
+  keywords:
+  - "MANDARIN"
+- name: "McDonald's"
+  keywords:
+  - "MCDONALD"
+  regex:
+  - "(?i)Mc\\s*Donald'?s.*"
+- name: "Milestones"
+  keywords:
+  - "MILESTONES"
+- name: "Pita Pit"
+  keywords:
+  - "Pita Pit"
+- name: "Pizza Hut"
+  keywords:
+  - "PIZZA HUT"
+- name: "Pizza Pizza"
+  keywords:
+  - "PIZZA PIZZA"
+- name: "Red Swan Pizza"
+  keywords:
+  - "RED SWAN PIZZA"
+- name: "Restaurant: La Savoie"
+  keywords:
+  - "LA SAVOIE"
+- name: "SkipTheDishes"
+  keywords:
+  - "SKIPTHEDISHES"
+- name: "Starbucks"
+  keywords:
+  - "STARBUCKS"
+- name: "Subway"
+  keywords:
+  - "Subway"
+- name: "Ticketmaster"
+  keywords:
+  - "TICKETMASTER"
+- name: "Tim Hortons"
+  keywords:
+  - "TIM HORTONS"
+  regex:
+  - "(?i)Tim\\s*Hortons.*"
+- name: "Wendy's"
+  regex:
+  - "(?i)Wendy'?s.*"

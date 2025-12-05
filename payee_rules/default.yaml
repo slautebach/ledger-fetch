@@ -1,0 +1,88 @@
+rules:
+- name: "Amazon"
+  keywords:
+  - "Amazon"
+  - "Amazon.ca"
+  - "AMZN"
+  - "Amzn Mktp"
+- name: "Amazon Prime"
+  keywords:
+  - "Amazon Prime Member"
+  - "Amazon.ca Prime Member"
+- name: "Baskin Robbins"
+  keywords:
+  - "BASKIN ROBBINS"
+- name: "Baton Rouge"
+  keywords:
+  - "BATON ROUGE"
+- name: "Best Buy"
+  keywords:
+  - "BEST BUY"
+  - "BESTBUY.CA"
+- name: "Canadian Tire"
+  keywords:
+  - "Canadian Tire"
+  - "CDN TIRE STORE"
+  regex:
+  - "(?i)Canadian\\s*Tier.*"
+  - "(?i)CDN TIRE(?! GAS).*"
+- name: "Canadian Tire Gas"
+  keywords:
+  - "CDN TIRE GAS"
+  - "CDN TIRE GASBAR"
+- name: "Canon Canada"
+  keywords:
+  - "CANON CDA"
+- name: "Chapters"
+  keywords:
+  - "CHAPTERS"
+- name: "Costco Annual Membership Renewal"
+  keywords:
+  - "COSTCO *ANNUAL RENEWAL"
+- name: "Costco Business Center"
+  keywords:
+  - "COSTCO BUSINESS"
+- name: "Costco Gas"
+  keywords:
+  - "COSTCO GAS"
+- name: "Costco Travel"
+  keywords:
+  - "COSTCO TRAVE"
+- name: "Costco Wholesale"
+  keywords:
+  - "COSTCO WHOLESALE"
+- name: "Costco.ca"
+  keywords:
+  - "Www Costco ca"
+- name: "Farm Boy"
+  keywords:
+  - "FARM BOY"
+- name: "Food Basics"
+  keywords:
+  - "Food Basics"
+  - "FOOD BASICS"
+- name: "Giant Tiger"
+  keywords:
+  - "GIANT TIGER"
+- name: "Goodfood"
+  keywords:
+  - "GOODFOOD"
+- name: "HelloFresh"
+  keywords:
+  - "HELLOFRESH"
+  - "HelloFresh"
+- name: "Instacart"
+  keywords:
+  - "By INSTACAR"
+- name: "LCBO"
+  keywords:
+  - "LCBO/RAO"
+- name: "Loblaws"
+  keywords:
+  - "Loblaws"
+- name: "Metro"
+  keywords:
+  - "METRO"
+- name: "Sobeys"
+  keywords:
+  - "SOBEYS"
