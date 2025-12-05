@@ -122,36 +122,31 @@ def main():
         settings.headless = True
     if args.debug:
         settings.debug = True
-        
+
     print(f"Starting Ledger Fetch...")
     print(f"Output directory: {settings.output_dir.resolve()}")
     print(f"Browser profile: {settings.browser_profile_path.resolve()}")
     
     banks_to_run = [args.bank]
+    from playwright.sync_api import sync_playwright
+    
     downloaders = get_downloaders(banks_to_run)
     
     if not downloaders:
         print("No downloaders selected.")
         return
         
-    for downloader in downloaders:
-        name = downloader.get_bank_name()
-        print(f"\n{'='*50}")
-        print(f"Running {name.upper()} Downloader")
-        print(f"{'='*50}")
-        
-        try:
-            downloader.run()
-            print(f"\n✅ {name.upper()} completed successfully.")
-        except Exception as e:
-            print(f"\n❌ {name.upper()} failed: {e}")
-            # Continue to next downloader even if one fails
-            
-        # Add a delay between banks to ensure browser process is fully closed
-        # and file locks on the profile are released
-        import time
-        print("Waiting for browser cleanup...")
-        time.sleep(1)
+    # Use a single shared Playwright instance for all downloaders
+    with sync_playwright() as p:
+        for downloader in downloaders:
+            try:
+                print(f"\n--- Starting download for {downloader.get_bank_name().upper()} ---")
+                downloader.run(playwright_instance=p)
+            except Exception as e:
+                print(f"Error running {downloader.get_bank_name()}: {e}")
+                if settings.debug:
+                    import traceback
+                    traceback.print_exc()
 
     run_normalization()        
     print("\nAll tasks completed.")

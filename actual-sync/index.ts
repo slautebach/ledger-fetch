@@ -1,6 +1,7 @@
 import * as api from '@actual-app/api';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import * as yaml from 'js-yaml';
 import csv from 'csv-parser';
 import yargs from 'yargs/yargs';
@@ -145,6 +146,8 @@ async function main() {
   console.log('\n--- Phase 1: Account Creation ---');
   let accountsCache = await api.getAccounts();
   const accountBalances = new Map<string, { balance: number, name: string }>(); // Map Unique Account ID to { balance, name }
+  const newlyCreatedBankLinkIds = new Set<string>();
+  const earliestTransactionDates = new Map<string, string>(); // Map Unique Account ID to YYYY-MM-DD
 
   for (const bankDir of bankDirs) {
     const bankName = path.basename(bankDir);
@@ -194,10 +197,12 @@ async function main() {
                  } catch (e: any) {
                      console.error(`    Error creating account: ${e.message}`);
                  }
+                 newlyCreatedBankLinkIds.add(accountId);
              } else {
                  console.log(`    [Dry Run] Would create account "${accountName}"`);
                  actualAccount = { id: 'dry-run-id', name: accountName };
                  accountsCache.push(actualAccount);
+                 newlyCreatedBankLinkIds.add(accountId);
              }
         }
       }
@@ -245,6 +250,13 @@ async function main() {
                 transactionsByAccount[accountId] = [];
             }
             transactionsByAccount[accountId].push(tx);
+            
+            // Track earliest date
+            const txDate = tx['Date'].substring(0, 10);
+            const currentEarliest = earliestTransactionDates.get(accountId);
+            if (!currentEarliest || txDate < currentEarliest) {
+                earliestTransactionDates.set(accountId, txDate);
+            }
         }
 
         for (const [accountId, txs] of Object.entries(transactionsByAccount)) {
@@ -270,10 +282,12 @@ async function main() {
                          console.error(`    Error creating account: ${e.message}`);
                          continue; // Skip transactions if account creation failed
                      }
+                     newlyCreatedBankLinkIds.add(accountId);
                  } else {
                      console.log(`    [Dry Run] Would create account "${nameToUse}"`);
                      actualAccount = { id: 'dry-run-id', name: nameToUse };
                      accountsCache.push(actualAccount);
+                     newlyCreatedBankLinkIds.add(accountId);
                  }
             }
 
@@ -331,18 +345,18 @@ async function main() {
       console.log('\n--- Phase 3: Reconciliation ---');
       // Refresh cache to get latest balances/accounts
       accountsCache = await api.getAccounts();
-      
+
       for (const [uniqueAccountId, info] of accountBalances) {
           const { balance: expectedBalance, name: accountName } = info;
-          
+
           // Find the account in Actual
           const actualAccount = accountsCache.find((a: any) => a.name === accountName || a.name === uniqueAccountId);
-          
+
           if (!actualAccount) {
               console.log(`    Skipping reconciliation for "${accountName}" (${uniqueAccountId}) - Account not found in Actual.`);
               continue;
           }
-          
+
           try {
               let currentBalance = 0;
               if (actualAccount.id === 'dry-run-id') {
@@ -351,10 +365,53 @@ async function main() {
               } else {
                   currentBalance = await api.getAccountBalance(actualAccount.id);
               }
-              
+
               if (expectedBalance !== currentBalance) {
                   const diff = expectedBalance - currentBalance;
                   console.log(`    [Balance Mismatch] Account "${actualAccount.name}": Expected ${expectedBalance / 100}, Actual ${currentBalance / 100}, Diff ${diff / 100}`);
+
+                  // CHECK IF THIS IS A NEW ACCOUNT
+                  if (newlyCreatedBankLinkIds.has(uniqueAccountId)) {
+                      console.log(`    -> Account is NEW. Creating initial reconciliation transaction...`);
+                      
+                      const transactionId = crypto.createHash('md5').update(uniqueAccountId + '_initial_reconcile').digest('hex');
+                      
+                      // Calculate date: Day before earliest transaction, or today if no transactions
+                      let dateStr = new Date().toISOString().substring(0, 10);
+                      const earliestDate = earliestTransactionDates.get(uniqueAccountId);
+                      if (earliestDate) {
+                          const dateObj = new Date(earliestDate);
+                          dateObj.setDate(dateObj.getDate() - 1);
+                          dateStr = dateObj.toISOString().substring(0, 10);
+                          console.log(`      Earliest transaction: ${earliestDate}. Setting reconciliation date to: ${dateStr}`);
+                      } else {
+                          console.log(`      No transactions found. Setting reconciliation date to today: ${dateStr}`);
+                      }
+                      
+                      const reconciliationTx: ActualTransaction = {
+                          date: dateStr,
+                          amount: diff, // The difference is what we need to add/subtract
+                          payee_name: 'Manual Balance Adjustment',
+                          imported_id: transactionId,
+                          notes: 'Initial reconciliation balance adjustment',
+                          cleared: true,
+                          account: actualAccount.id
+                      };
+
+                       if (!argv['dry-run']) {
+                          try {
+                              await api.importTransactions(actualAccount.id, [reconciliationTx]);
+                              console.log(`      SUCCESS: Created initial reconciliation transaction for ${diff / 100}`);
+                          } catch (e: any) {
+                              console.error(`      ERROR: Failed to create reconciliation transaction: ${e.message}`);
+                          }
+                       } else {
+                           console.log(`      [Dry Run] Would create transaction: ${JSON.stringify(reconciliationTx)}`);
+                       }
+                  } else {
+                      console.log(`    -> Account is EXISTING. Skipping auto-reconciliation.`);
+                  }
+
               } else {
                    console.log(`    Account "${actualAccount.name}" is balanced.`);
               }
