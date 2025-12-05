@@ -21,6 +21,19 @@ class BankDownloader(ABC):
         self.playwright: Playwright = None
         self.accounts_cache: Dict[str, Account] = {}
 
+        # Log configuration
+        try:
+            bank_name = self.get_bank_name()
+            bank_config = getattr(self.config, bank_name, None)
+            if bank_config:
+                # Handle Pydantic v1/v2 compatibility
+                dump_func = getattr(bank_config, 'model_dump', getattr(bank_config, 'dict', None))
+                config_dict = dump_func() if dump_func else str(bank_config)
+                print(f"[{bank_name.upper()}] Configuration: {config_dict}")
+        except Exception:
+            # Ignore errors during init logging (e.g. if get_bank_name relies on uninitialized vars)
+            pass
+
     def run(self):
         """
         Main execution method.

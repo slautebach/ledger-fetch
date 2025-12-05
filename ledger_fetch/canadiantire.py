@@ -175,14 +175,14 @@ class CanadianTireDownloader(BankDownloader):
         """Fetch transactions via API."""
         
         # 1. Fetch Accounts
-        accounts = self.fetch_accounts()
-        if not accounts:
-            print("No accounts found.")
-            # Fallback to legacy single-ref method if needed? 
-            # But fetch_accounts implements the same logic.
-            return []
-            
-        self.save_accounts(accounts)
+        # 1. Fetch Accounts
+        if self.accounts_cache:
+            print("Using cached accounts...")
+            accounts = list(self.accounts_cache.values())
+        else:
+            accounts = self.fetch_accounts()
+            if accounts:
+                self.save_accounts(accounts)
         
         # 2. Get statement dates (Assuming global/current context)
         statement_dates = self._get_statement_dates()
@@ -318,17 +318,14 @@ class CanadianTireDownloader(BankDownloader):
             description = TransactionNormalizer.clean_description(merchant)
             
             amount_val = float(txn_data.get('amount', 0))
-            trans_type = txn_data.get('type', '')
-            
-            # Signed amount
-            if trans_type == 'PURCHASE':
-                amount = -amount_val
-            else:
-                amount = amount_val
+ 
+            amount = amount_val
                 
             # IDs
             ref_num = txn_data.get('referenceNumber', '')
             unique_trans_id = ref_num if ref_num else TransactionNormalizer.generate_transaction_id(date, amount, description, "CTFS")
+
+            trans_type = txn_data.get('type', '')
             
             # Determine if transfer (Payment)
             is_transfer = trans_type == 'PAYMENT'
