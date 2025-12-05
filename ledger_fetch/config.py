@@ -1,13 +1,17 @@
-import os
+from typing import List, Optional, Dict, Any
 from pathlib import Path
-from typing import Optional, Dict, Any
-from pydantic import Field
+from pydantic import Field, BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
+import yaml
 
-class BankConfig(BaseSettings):
+DEFAULT_DAYS_TO_FETCH = 1095 # 3 years
+
+class BankConfig(BaseModel):
     """Configuration specific to a bank."""
     enabled: bool = True
     invert_credit_transactions: bool = False
+    days_to_fetch: int = DEFAULT_DAYS_TO_FETCH
     # Add other bank-specific settings here if needed
 
 class Config(BaseSettings):
@@ -53,15 +57,13 @@ class Config(BaseSettings):
     wealthsimple: BankConfig = Field(default_factory=BankConfig)
     amex: BankConfig = Field(default_factory=BankConfig)
     canadiantire: BankConfig = Field(default_factory=BankConfig)
+    bmo: BankConfig = Field(default_factory=BankConfig)
+    cibc: BankConfig = Field(default_factory=BankConfig)
 
     model_config = SettingsConfigDict(
         env_prefix='LEDGER_FETCH_',
         env_nested_delimiter='__',
         extra='ignore'
-        # We will load the config file manually in a factory method or 
-        # let the user pass it. For now, we'll keep it simple.
-        # To support yaml/toml automatically, we might need extra dependencies 
-        # and a custom source.
     )
 
     @classmethod

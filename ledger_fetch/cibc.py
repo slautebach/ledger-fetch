@@ -253,8 +253,11 @@ class CIBCDownloader(BankDownloader):
         today = datetime.now()
         transactions = []
         
-        # Iterate over the past 12 months
-        for i in range(12):
+        # Calculate months to fetch based on config
+        months_to_fetch = (self.config.cibc.days_to_fetch // 30) + 1 # Approximate
+        
+        # Iterate over the past months
+        for i in range(months_to_fetch):
             # Calculate start and end of the month
             month_target = today.month - i
             year_target = today.year

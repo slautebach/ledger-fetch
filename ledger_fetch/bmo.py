@@ -127,7 +127,6 @@ class BMODownloader(BankDownloader):
         # Process each account
         for idx, account in enumerate(accounts, 1):
             print(f"\n[{idx}/{len(accounts)}] Processing: {account.account_name} ({account.account_number})")
-            
             try:
                 # Click on the account to open it
                 self._click_account(idx - 1)  # 0-indexed
@@ -145,35 +144,31 @@ class BMODownloader(BankDownloader):
                     self.save_accounts(accounts)
                 
                 # BMO API doesn't allow date ranges that cross calendar years
-                # Fetch transactions by calendar year
+                # Fetch transactions by calendar year (looping backwards)
                 all_account_transactions = []
                 
                 current_date = datetime.now()
                 current_year = current_date.year
                 
-
+                years_to_fetch = (self.config.bmo.days_to_fetch // 365) + 1
                 
-                # Fetch current year (from Jan 1 to today)
-                from_date_str = f"{current_year}-01-01"
-                to_date_str = current_date.strftime("%Y-%m-%d")
-                
-                print(f"  Fetching {current_year}: {from_date_str} to {to_date_str}...")
-                transactions_current = self._fetch_transactions_from_api(from_date_str, to_date_str, account)
-                all_account_transactions.extend(transactions_current)
-                time.sleep(1)
-                
-                # Fetch previous year (full year)
-                prev_year = current_year - 1
-                from_date_str = f"{prev_year}-01-01"
-                to_date_str = f"{prev_year}-12-31"
-                
-                print(f"  Fetching {prev_year}: {from_date_str} to {to_date_str}...")
-                transactions_prev = self._fetch_transactions_from_api(from_date_str, to_date_str, account)
-                all_account_transactions.extend(transactions_prev)
-                
-                print(f"  Total transactions for this account: {len(all_account_transactions)}")
-                
-
+                for i in range(years_to_fetch):
+                    target_year = current_year - i
+                    
+                    if target_year == current_year:
+                        from_date_str = f"{target_year}-01-01"
+                        to_date_str = current_date.strftime("%Y-%m-%d")
+                    else:
+                        from_date_str = f"{target_year}-01-01"
+                        to_date_str = f"{target_year}-12-31"
+                    
+                    print(f"  Fetching {target_year}: {from_date_str} to {to_date_str}...")
+                    try:
+                        transactions_year = self._fetch_transactions_from_api(from_date_str, to_date_str, account)
+                        all_account_transactions.extend(transactions_year)
+                    except Exception as e:
+                        print(f"  Error fetching {target_year}: {e}")
+                    time.sleep(1)
                 
                 all_transactions.extend(all_account_transactions)
                 

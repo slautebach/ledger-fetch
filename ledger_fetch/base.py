@@ -34,7 +34,7 @@ class BankDownloader(ABC):
             # Ignore errors during init logging (e.g. if get_bank_name relies on uninitialized vars)
             pass
 
-    def run(self):
+    def run(self, playwright_instance: Playwright = None):
         """
         Main execution method.
         
@@ -45,40 +45,51 @@ class BankDownloader(ABC):
         4.  Downloads and parses transactions.
         5.  Saves the transactions to CSV files.
         6.  Cleans up resources.
+        
+        Args:
+            playwright_instance: Optional shared Playwright instance. If None, one will be created.
         """
-        with sync_playwright() as p:
-            self.playwright = p
-            self.setup_driver()
-            try:
-                self.login()
-                
-                # Fetch accounts first so we have type information
-                try:
-                    accounts = self.fetch_accounts()
-                    if accounts:
-                        self.save_accounts(accounts)
-                        # Cache accounts for transaction processing
-                        self.accounts_cache = {a.unique_account_id: a for a in accounts}
-                except Exception as e:
-                    print(f"Warning: Failed to fetch accounts: {e}")
-                    self.accounts_cache = {}
+        if playwright_instance:
+            self.playwright = playwright_instance
+            self._run_internal()
+        else:
+            with sync_playwright() as p:
+                self.playwright = p
+                self._run_internal()
 
-                self.navigate_to_transactions()
-                transactions = self.download_transactions()
-                self.save_transactions(transactions)
+    def _run_internal(self):
+        """Internal execution logic to be run within a valid Playwright context."""
+        self.setup_driver()
+        try:
+            self.login()
+            
+            # Fetch accounts first so we have type information
+            try:
+                accounts = self.fetch_accounts()
+                if accounts:
+                    self.save_accounts(accounts)
+                    # Cache accounts for transaction processing
+                    self.accounts_cache = {a.unique_account_id: a for a in accounts}
             except Exception as e:
-                if self.config.debug:
-                    print(f"\n{'='*60}")
-                    print(f"CRITICAL ERROR: {e}")
-                    print("The browser is still open for debugging.")
-                    print("Network traffic has been recorded to the HAR file.")
-                    print(f"{'='*60}\n")
-                    import traceback
-                    traceback.print_exc()
-                    input("Press Enter to close the browser and exit...")
-                raise e
-            finally:
-                self.teardown()
+                print(f"Warning: Failed to fetch accounts: {e}")
+                self.accounts_cache = {}
+
+            self.navigate_to_transactions()
+            transactions = self.download_transactions()
+            self.save_transactions(transactions)
+        except Exception as e:
+            if self.config.debug:
+                print(f"\n{'='*60}")
+                print(f"CRITICAL ERROR: {e}")
+                print("The browser is still open for debugging.")
+                print("Network traffic has been recorded to the HAR file.")
+                print(f"{'='*60}\n")
+                import traceback
+                traceback.print_exc()
+                input("Press Enter to close the browser and exit...")
+            raise e
+        finally:
+            self.teardown()
 
     def setup_driver(self):
         """

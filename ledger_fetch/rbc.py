@@ -284,7 +284,7 @@ class RBCDownloader(BankDownloader):
              # Note: We might want to fetch both posted and pending, but for now let's stick to posted as per user example
              params = f"billingStatus=posted&txType=postedCreditCard&timestamp={int(time.time()*1000)}"
         elif account.type in [AccountType.CHEQUING, AccountType.SAVINGS]:
-            params = f"intervalType=DAY&intervalValue={days}&type=ALL&txType=pda&useColtOnly=response"
+            params = f"intervalType=DAY&intervalValue={self.config.rbc.days_to_fetch}&type=ALL&txType=pda&useColtOnly=response"
         else:
              # Should not happen due to check above
              return []
@@ -336,7 +336,19 @@ class RBCDownloader(BankDownloader):
             date = TransactionNormalizer.normalize_date(date_str)
             
             # Amount
-            amount = float(raw.get('amount', 0))
+            try:
+                raw_amt = float(raw.get('amount', 0))
+            except (ValueError, TypeError):
+                raw_amt = 0.0
+
+            # Sign based on creditDebitIndicator
+            indicator = raw.get('creditDebitIndicator')
+            if indicator == 'DEBIT':
+                amount = -abs(raw_amt)
+            elif indicator == 'CREDIT':
+                amount = abs(raw_amt)
+            else:
+                amount = raw_amt
             
             # Description
             # Try multiple common keys for description
