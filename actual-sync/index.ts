@@ -42,6 +42,7 @@ interface CsvAccount {
   'Net Value': string;
   'Net Deposits': string;
   'Created At': string;
+  'Current Balance': string;
 }
 
 interface ActualTransaction {
@@ -66,6 +67,11 @@ const argv = yargs(hideBin(process.argv))
     type: 'boolean',
     description: 'Run without making changes',
     default: false
+  })
+  .option('transactions-dir', {
+    alias: 't',
+    type: 'string',
+    description: 'Path to transactions directory'
   })
   .parseSync();
 
@@ -115,7 +121,12 @@ async function main() {
   }
 
   // 3. Find Bank Directories
-  const transactionsDir = config.output_dir ? path.resolve(path.dirname(argv.config), config.output_dir) : path.resolve(__dirname, '../transactions');
+  let transactionsDir = config.output_dir ? path.resolve(path.dirname(argv.config), config.output_dir) : path.resolve(__dirname, '../transactions');
+  
+  if (argv['transactions-dir']) {
+      transactionsDir = path.resolve(argv['transactions-dir']);
+  }
+
   console.log(`Scanning for bank directories in: ${transactionsDir}`);
   
   if (!fs.existsSync(transactionsDir)) {
@@ -133,6 +144,7 @@ async function main() {
   // 4. Process Accounts (Pass 1)
   console.log('\n--- Phase 1: Account Creation ---');
   let accountsCache = await api.getAccounts();
+  const accountBalances = new Map<string, { balance: number, name: string }>(); // Map Unique Account ID to { balance, name }
 
   for (const bankDir of bankDirs) {
     const bankName = path.basename(bankDir);
@@ -146,7 +158,17 @@ async function main() {
       await new Promise<void>((resolve, reject) => {
         fs.createReadStream(accountsFile)
           .pipe(csv())
-          .on('data', (data: any) => csvAccounts.push(data))
+          .on('data', (data: any) => {
+            csvAccounts.push(data);
+            if (data['Unique Account ID']) {
+                // Store balance in cents if available, and always store name
+                const balance = data['Current Balance'] ? Math.round(parseFloat(data['Current Balance']) * 100) : 0;
+                accountBalances.set(data['Unique Account ID'], {
+                    balance: balance,
+                    name: data['Account Name']
+                });
+            }
+          })
           .on('end', () => resolve())
           .on('error', (err: any) => reject(err));
       });
@@ -165,7 +187,6 @@ async function main() {
                  try {
                     const newId = await api.createAccount({ 
                         name: accountName, 
-                        type: 'other', 
                         offbudget: true 
                     });
                     actualAccount = { id: newId, name: accountName };
@@ -178,77 +199,14 @@ async function main() {
                  actualAccount = { id: 'dry-run-id', name: accountName };
                  accountsCache.push(actualAccount);
              }
-        } else {
-            // console.log(`    Account "${accountName}" already exists.`);
         }
       }
-      
-      if (!argv['dry-run']) {
-        // Sync after processing accounts.csv for this bank
-        await api.sync();
-        accountsCache = await api.getAccounts();
-      }
-
     }
-    
-    // Always scan transaction files for additional accounts not in accounts.csv
-    console.log(`  Scanning transactions for additional accounts...`);
-    
-    const transactionFiles = fs.readdirSync(bankDir)
-      .filter(f => f.endsWith('.csv') && f !== 'accounts.csv')
-      .map(f => path.join(bankDir, f));
-
-    for (const file of transactionFiles) {
-        const transactions: CsvTransaction[] = [];
-        await new Promise<void>((resolve, reject) => {
-            fs.createReadStream(file)
-            .pipe(csv())
-            .on('data', (data: any) => transactions.push(data))
-            .on('end', () => resolve())
-            .on('error', (err: any) => reject(err));
-        });
-
-        const uniqueAccounts = new Set<string>();
-        const accountNames = new Map<string, string>();
-
-        for (const tx of transactions) {
-            const accountId = tx['Unique Account ID'];
-            const accountName = tx['Account Name'];
-            if (accountId) {
-                uniqueAccounts.add(accountId);
-                if (accountName) {
-                    accountNames.set(accountId, accountName);
-                }
-            }
-        }
-
-        for (const accountId of uniqueAccounts) {
-            const nameToUse = accountNames.get(accountId) || accountId;
-            let actualAccount = accountsCache.find((a: any) => a.name === nameToUse || a.name === accountId);
-
-            if (!actualAccount) {
-                console.log(`    Account "${nameToUse}" (${accountId}) not found. Creating...`);
-                if (!argv['dry-run']) {
-                    try {
-                        const newId = await api.createAccount({ name: nameToUse, type: 'other', offbudget: true });
-                        actualAccount = { id: newId, name: nameToUse };
-                        accountsCache.push(actualAccount);
-                    } catch (e: any) {
-                        console.error(`    Error creating account: ${e.message}`);
-                    }
-                } else {
-                    console.log(`    [Dry Run] Would create account "${nameToUse}"`);
-                    actualAccount = { id: 'dry-run-id', name: nameToUse };
-                    accountsCache.push(actualAccount);
-                }
-            }
-        }
-    }
-    
-    if (!argv['dry-run']) {
-        await api.sync();
-        accountsCache = await api.getAccounts();
-    }
+  }
+  
+  if (!argv['dry-run']) {
+    await api.sync();
+    accountsCache = await api.getAccounts();
   }
 
   // 5. Process Transactions (Pass 2)
@@ -291,14 +249,32 @@ async function main() {
 
         for (const [accountId, txs] of Object.entries(transactionsByAccount)) {
             const txAccountName = txs[0]['Account Name'];
-            const nameToUse = txAccountName || accountId;
+            // Check if we have a known name from accounts.csv
+            const knownName = accountBalances.get(accountId)?.name;
+            const nameToUse = knownName || txAccountName || accountId;
             
-            // Find the account in Actual - it SHOULD exist now
-            const actualAccount = accountsCache.find((a: any) => a.name === nameToUse || a.name === accountId);
+            // Find the account in Actual
+            let actualAccount = accountsCache.find((a: any) => a.name === nameToUse || a.name === accountId);
 
             if (!actualAccount) {
-                console.error(`    CRITICAL ERROR: Account "${nameToUse}" (${accountId}) still not found in Actual after Phase 1. Skipping transactions.`);
-                continue;
+                console.log(`    Account "${nameToUse}" (${accountId}) not found (not in accounts.csv). Creating on the fly...`);
+                 if (!argv['dry-run']) {
+                     try {
+                        const newId = await api.createAccount({ 
+                            name: nameToUse, 
+                            offbudget: true 
+                        });
+                        actualAccount = { id: newId, name: nameToUse };
+                        accountsCache.push(actualAccount);
+                     } catch (e: any) {
+                         console.error(`    Error creating account: ${e.message}`);
+                         continue; // Skip transactions if account creation failed
+                     }
+                 } else {
+                     console.log(`    [Dry Run] Would create account "${nameToUse}"`);
+                     actualAccount = { id: 'dry-run-id', name: nameToUse };
+                     accountsCache.push(actualAccount);
+                 }
             }
 
             // Prepare Transactions
@@ -350,6 +326,44 @@ async function main() {
     }
   }
     
+  // 6. Phase 3: Reconciliation (Global)
+  if (!argv['dry-run']) {
+      console.log('\n--- Phase 3: Reconciliation ---');
+      // Refresh cache to get latest balances/accounts
+      accountsCache = await api.getAccounts();
+      
+      for (const [uniqueAccountId, info] of accountBalances) {
+          const { balance: expectedBalance, name: accountName } = info;
+          
+          // Find the account in Actual
+          const actualAccount = accountsCache.find((a: any) => a.name === accountName || a.name === uniqueAccountId);
+          
+          if (!actualAccount) {
+              console.log(`    Skipping reconciliation for "${accountName}" (${uniqueAccountId}) - Account not found in Actual.`);
+              continue;
+          }
+          
+          try {
+              let currentBalance = 0;
+              if (actualAccount.id === 'dry-run-id') {
+                  console.log(`    [Dry Run] Assuming current balance is 0 for new account.`);
+                  currentBalance = 0;
+              } else {
+                  currentBalance = await api.getAccountBalance(actualAccount.id);
+              }
+              
+              if (expectedBalance !== currentBalance) {
+                  const diff = expectedBalance - currentBalance;
+                  console.log(`    [Balance Mismatch] Account "${actualAccount.name}": Expected ${expectedBalance / 100}, Actual ${currentBalance / 100}, Diff ${diff / 100}`);
+              } else {
+                   console.log(`    Account "${actualAccount.name}" is balanced.`);
+              }
+          } catch (e: any) {
+              console.error(`    Error reconciling account "${accountName}": ${e.message}`);
+          }
+      }
+  }
+
   // Sync after processing all files
   if (!argv['dry-run']) {
       console.log('Syncing with server...');

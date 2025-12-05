@@ -52,7 +52,7 @@ def run_normalization():
         if file_path.name.lower() == "accounts.csv":
             continue
             
-        print(f"Processing {file_path.name}...")
+        print(f"Processing {file_path.parent.name}/{file_path.name}...")
         try:
             # Read CSV
             df = pd.read_csv(file_path)
