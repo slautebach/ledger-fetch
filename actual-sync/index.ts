@@ -179,6 +179,7 @@ async function main() {
       for (const csvAcc of csvAccounts) {
         const accountId = csvAcc['Unique Account ID'];
         const accountName = csvAcc['Account Name'];
+        const accountType = csvAcc['Type'];
         
         if (!accountId) continue;
 
@@ -186,11 +187,29 @@ async function main() {
 
         if (!actualAccount) {
              console.log(`    Account "${accountName}" (${accountId}) not found. Creating...`);
+             
+             // Determine if account should be off-budget
+             // User Rule: Credit Card, Checking, Cash -> On Budget (offbudget: false)
+             //            Investment, Mortgage -> Off Budget (offbudget: true)
+             const getBudgetStatus = (type: string): boolean => {
+                 if (!type) return true; // Default to off-budget if unknown
+                 const lowerType = type.toLowerCase();
+                 if (lowerType.includes('credit card') || 
+                     lowerType.includes('checking') || 
+                     lowerType.includes('chequing') || 
+                     lowerType.includes('cash')) {
+                     return false; // On Budget
+                 }
+                 return true; // Off Budget (Investment, Mortgage, etc.)
+             };
+
+             const isOffBudget = getBudgetStatus(accountType);
+
              if (!argv['dry-run']) {
                  try {
                     const newId = await api.createAccount({ 
                         name: accountName, 
-                        offbudget: true 
+                        offbudget: isOffBudget 
                     });
                     actualAccount = { id: newId, name: accountName };
                     accountsCache.push(actualAccount);
@@ -199,7 +218,7 @@ async function main() {
                  }
                  newlyCreatedBankLinkIds.add(accountId);
              } else {
-                 console.log(`    [Dry Run] Would create account "${accountName}"`);
+                 console.log(`    [Dry Run] Would create account "${accountName}" (Type: ${accountType}, OffBudget: ${isOffBudget})`);
                  actualAccount = { id: 'dry-run-id', name: accountName };
                  accountsCache.push(actualAccount);
                  newlyCreatedBankLinkIds.add(accountId);
@@ -303,7 +322,7 @@ async function main() {
                 const payee = tx['Payee Name'] || tx['Payee'] || tx['Description'];
 
                 // Notes: Use 'Notes' if available
-                let notes = tx['Notes'] || tx['Description'] || '';
+                let notes =  tx['Description'] || tx['Notes'] || '';
                 
                 // Append Transfer status to notes
                 if (tx['Is Transfer'] === 'True' || tx['Is Transfer'] === 'true' || tx['Is Transfer'] === '1') {

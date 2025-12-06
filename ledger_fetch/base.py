@@ -171,6 +171,25 @@ class BankDownloader(ABC):
     def save_transactions(self, transactions: List[Transaction]):
         """Save transactions to CSV."""
         from .utils import CSVWriter
+        
+        # Deduplicate based on unique_transaction_id to handle overlapping downloads
+        # (e.g. "Recent Activity" vs "Monthly Statement")
+        unique_txns = {}
+        print(f"DEBUG: Starting deduplication on {len(transactions)} transactions...")
+        duplicate_count = 0
+        for t in transactions:
+             # If we have a collision, we keep the first one encountered.
+             # Since amex.py processes files in loop, order is preserved.
+             if t.unique_transaction_id in unique_txns:
+                 duplicate_count += 1
+                 if duplicate_count <= 5:
+                     print(f"DEBUG: Duplicate found! ID: {repr(t.unique_transaction_id)}")
+             else:
+                 unique_txns[t.unique_transaction_id] = t
+        
+        print(f"DEBUG: Deduplication complete. Removed {duplicate_count} duplicates. Final count: {len(unique_txns)}")
+        transactions = list(unique_txns.values())
+
         writer = CSVWriter(self.config.output_dir / self.get_bank_name())
         
         # Convert Transactions to dicts and enforce signs

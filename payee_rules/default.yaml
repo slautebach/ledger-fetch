@@ -9,12 +9,6 @@ rules:
   keywords:
   - "Amazon Prime Member"
   - "Amazon.ca Prime Member"
-- name: "Baskin Robbins"
-  keywords:
-  - "BASKIN ROBBINS"
-- name: "Baton Rouge"
-  keywords:
-  - "BATON ROUGE"
 - name: "Best Buy"
   keywords:
   - "BEST BUY"
