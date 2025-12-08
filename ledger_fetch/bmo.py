@@ -509,7 +509,7 @@ class BMODownloader(BankDownloader):
             txn.account_name = account.account_name
             txn.date = date
             txn.description = description
-            txn.payee = description # Original (cleaned) description
+
             txn.payee_name = payee_name # Normalized payee
             txn.amount = amount
             txn.currency = 'CAD'

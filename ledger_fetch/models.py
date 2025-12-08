@@ -63,7 +63,6 @@ class Transaction(BaseModel):
         'Account Name',
         'Date',
         'Description',
-        'Payee',
         'Payee Name',
         'Amount',
         'Currency',
@@ -118,13 +117,6 @@ class Transaction(BaseModel):
     def description(self, value: str):
         self.set('Description', value)
 
-    @property
-    def payee(self) -> str:
-        return self.get('Payee', '')
-
-    @payee.setter
-    def payee(self, value: str):
-        self.set('Payee', value)
 
     @property
     def payee_name(self) -> str:
@@ -181,7 +173,6 @@ class Transaction(BaseModel):
             'Account Name': self.account_name,
             'Date': self.date,
             'Description': self.description,
-            'Payee': self.payee,
             'Payee Name': self.payee_name,
             'Amount': self.amount,
             'Currency': self.currency,
@@ -199,7 +190,10 @@ class Account(BaseModel):
         'Type',
         'Status',
         'Current Balance',
-        'Created At'
+        'Created At',
+        'Statement Balance',
+        'Remaining Balance Due',
+        'Payment Due Date'
     ]
 
     def __init__(self, raw_data: Dict[str, Any], unique_account_id: str):
@@ -286,6 +280,38 @@ class Account(BaseModel):
     def created_at(self, value: str):
         self.set('Created At', value)
 
+    @property
+    def statement_balance(self) -> float:
+        val = self.get('Statement Balance', 0.0)
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return 0.0
+
+    @statement_balance.setter
+    def statement_balance(self, value: float):
+        self.set('Statement Balance', value)
+
+    @property
+    def remaining_balance_due(self) -> float:
+        val = self.get('Remaining Balance Due', 0.0)
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return 0.0
+
+    @remaining_balance_due.setter
+    def remaining_balance_due(self, value: float):
+        self.set('Remaining Balance Due', value)
+
+    @property
+    def payment_due_date(self) -> str:
+        return self.get('Payment Due Date', '')
+
+    @payment_due_date.setter
+    def payment_due_date(self, value: str):
+        self.set('Payment Due Date', value)
+
     def get_required_csv_row(self) -> Dict[str, Any]:
         return {
             'Unique Account ID': self.unique_account_id,
@@ -295,5 +321,8 @@ class Account(BaseModel):
             'Type': self.type,
             'Status': self.status,
             'Current Balance': self.current_balance,
-            'Created At': self.created_at
+            'Created At': self.created_at,
+            'Statement Balance': self.statement_balance,
+            'Remaining Balance Due': self.remaining_balance_due,
+            'Payment Due Date': self.payment_due_date
         }

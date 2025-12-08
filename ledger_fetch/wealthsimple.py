@@ -273,7 +273,7 @@ class WealthsimpleDownloader(BankDownloader):
         txn.account_name = account.account_name
         txn.date = date
         txn.description = cleaned_description
-        txn.payee = cleaned_description # Original (cleaned) description
+
         txn.payee_name = payee_name # Normalized payee
         txn.amount = amount
         txn.currency = activity.get('amount', {}).get('currency') if isinstance(activity.get('amount'), dict) else activity.get('currency')

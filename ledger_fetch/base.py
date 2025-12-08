@@ -74,6 +74,9 @@ class BankDownloader(ABC):
                 print(f"Warning: Failed to fetch accounts: {e}")
                 self.accounts_cache = {}
 
+            if self.accounts_cache:
+                self.save_credit_card_statements(list(self.accounts_cache.values()))
+
             self.navigate_to_transactions()
             transactions = self.download_transactions()
             self.save_transactions(transactions)
@@ -202,20 +205,37 @@ class BankDownloader(ABC):
                 bank_name = self.get_bank_name()
                 bank_config = getattr(self.config, bank_name, None)
                 
-                if bank_config and bank_config.invert_credit_transactions:
-                    # Enforce negative for purchases (if positive) and positive for payments (if negative)
-                    # Assumption: Bank returns positive for purchases.
-                    # We want: Purchase = Negative, Payment = Positive.
-                    # If we just multiply by -1, we assume the input is "Amount Owed" or "Debit Amount".
-                    try:
-                        amount = float(t.amount)
-                        # If it's a liability account, we invert the sign relative to "Debit is Positive" convention
-                        # So a $50 purchase (Debit) becomes -50.
-                        # A -$50 payment (Credit) becomes +50.
-                        t.amount = -amount
-                    except (ValueError, TypeError):
-                        pass
+                if bank_config:
+                    # Check for account-specific config first
+                    should_invert = bank_config.invert_credit_transactions
+                    
+                    if hasattr(bank_config, 'accounts') and bank_config.accounts:
+                        for acc_conf in bank_config.accounts:
+                            if acc_conf.id == t.unique_account_id:
+                                if acc_conf.invert_credit_transactions is not None:
+                                    should_invert = acc_conf.invert_credit_transactions
+                                break
+                    
+                    if should_invert:
+                        # Enforce negative for purchases (if positive) and positive for payments (if negative)
+                        # Assumption: Bank returns positive for purchases.
+                        # We want: Purchase = Negative, Payment = Positive.
+                        # If we just multiply by -1, we assume the input is "Amount Owed" or "Debit Amount".
+                        try:
+                            amount = float(t.amount)
+                            # If it's a liability account, we invert the sign relative to "Debit is Positive" convention
+                            # So a $50 purchase (Debit) becomes -50.
+                            # A -$50 payment (Credit) becomes +50.
+                            t.amount = -amount
+                        except (ValueError, TypeError):
+                            pass
             
+            # Ensure Account Name is set
+            if not t.account_name and t.unique_account_id:
+                 acc_params = self.accounts_cache.get(t.unique_account_id)
+                 if acc_params:
+                     t.account_name = acc_params.account_name
+
             txn_dicts.append(t.to_csv_row())
         
         by_month = {}
@@ -335,6 +355,94 @@ class BankDownloader(ABC):
         
         account_dicts = [a.to_csv_row() for a in accounts]
         writer.write(account_dicts, "accounts.csv", fieldnames=Account.CSV_FIELDS)
+
+    def save_credit_card_statements(self, accounts: List[Account]):
+        """
+        Save/Upsert credit card statement information to a shared CSV.
+        
+        This method updates 'transactions/creditcard-statements.csv' with the
+        latest statement info found in 'accounts'. It preserves data from other
+        banks by reading the existing file first.
+        """
+        from typing import Dict
+        import csv
+        
+        # 1. Define fields and output path
+        fields = [
+            'Unique Account ID',
+            'Account Name',
+            'Account Number',
+            'Current Balance Owing',
+            'Statement Balance',
+            'Remaining Balance Due',
+            'Payment Due Date'
+        ]
+        
+        output_file = self.config.output_dir / "creditcard-statements.csv"
+        
+        # 2. Filter loop: Only care about accounts that HAVE statement info or are Credit Cards
+        filtered_accounts = []
+        for acc in accounts:
+            # Check if it has relevant info (simple check: due date or statement balance is non-zero)
+            # OR if it's explicitly a credit card account.
+            has_info = acc.payment_due_date or acc.statement_balance != 0 or acc.remaining_balance_due != 0
+            is_cc = acc.is_liability # Broad check for now, can be stricter if needed
+            
+            if is_cc or has_info:
+                filtered_accounts.append(acc)
+                
+        if not filtered_accounts:
+            return
+
+        print(f"Updating shared credit card statement file with {len(filtered_accounts)} accounts...")
+
+        # 3. Read existing data into a dict keyed by Unique Account ID
+        existing_data: Dict[str, Dict[str, Any]] = {}
+        if output_file.exists():
+            try:
+                with open(output_file, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        # Clean up keys if needed (e.g. if file format changed), but assume consistency
+                        aid = row.get('Unique Account ID')
+                        if aid:
+                            existing_data[aid] = row
+            except Exception as e:
+                print(f"Warning: Failed to read existing statement file: {e}")
+
+        # 4. Upsert our new data
+        for acc in filtered_accounts:
+            # Build the row dictionary manually to match specific fields (subset of Account)
+            row_data = {
+                'Unique Account ID': acc.unique_account_id,
+                'Account Name': acc.account_name,
+                'Account Number': acc.account_number,
+                'Current Balance Owing': acc.current_balance,
+                'Statement Balance': acc.statement_balance,
+                'Remaining Balance Due': acc.remaining_balance_due,
+                'Payment Due Date': acc.payment_due_date
+            }
+            # Enforce sign convention on liability balances if needed?
+            # Assuming 'Statement Balance' usually presented as positive debt in statements,
+            # but our Account.current_balance is negative for debt.
+            # Let's keep raw values as extracted for now unless specific inversion rule requested for this file.
+            
+            existing_data[acc.unique_account_id] = row_data
+
+        # 5. Write back to file
+        try:
+            with open(output_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fields)
+                writer.writeheader()
+                # Sort by ID for stability
+                for aid in sorted(existing_data.keys()):
+                    # Ensure we only write known fields + extras if we want to preserve them?
+                    # For now, strict adherence to `fields` to keep file clean.
+                    row = {k: existing_data[aid].get(k, '') for k in fields}
+                    writer.writerow(row)
+            print(f"Saved statement info to {output_file}")
+        except Exception as e:
+            print(f"Error saving credit card statements: {e}")
 
     def teardown(self):
         """Close browser context."""

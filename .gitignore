@@ -218,3 +218,4 @@ __marimo__/
 /payee_rules/tremblant.yaml
 /payee_rules/creditcards.yaml
 /payee_rules/bill_payments.yaml
+actual-sync/debug*.txt

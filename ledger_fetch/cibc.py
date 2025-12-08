@@ -337,11 +337,11 @@ class CIBCDownloader(BankDownloader):
 
                         # Create Transaction
                         txn = Transaction(tx, account.unique_account_id)
-                        txn.unique_transaction_id = tx.get('id') or TransactionNormalizer.generate_transaction_id(normalized_date, amount, clean_desc, account.unique_account_id)
+                        txn.unique_transaction_id = TransactionNormalizer.generate_transaction_id(normalized_date, amount, clean_desc, account.unique_account_id)
                         txn.account_name = account.account_name
                         txn.date = normalized_date
                         txn.description = clean_desc
-                        txn.payee = clean_desc # Original (cleaned) description
+
                         txn.payee_name = payee_name # Normalized payee
                         txn.amount = amount
                         txn.currency = 'CAD'

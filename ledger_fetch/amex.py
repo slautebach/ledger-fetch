@@ -64,63 +64,95 @@ class AmexDownloader(BankDownloader):
 
     def fetch_accounts(self) -> List[Account]:
         """
-        Fetch account details by scraping the Recent Activity page DOM.
+        Fetch account details by scraping both Recent Activity (for ID) and Dashboard (for balances).
         """
-        print("Fetching account details from page DOM...")
-        try:
-            # Navigate to recent activity if not already there
-            if "activity/recent" not in self.page.url:
+        print("Fetching account details...")
+        
+        # --- Step 1: Get Account ID from Activity Page ---
+        if "activity/recent" not in self.page.url:
+            print("Navigating to Recent Activity for Account ID...")
+            try:
                 self.page.goto("https://global.americanexpress.com/activity/recent")
-                # Wait for basic load
-                try:
-                     self.page.wait_for_selector("[data-locator-id='total_balance_title_value']", timeout=15000)
-                except: 
-                     print("Warning: Timeout waiting for balance element.")
+                self.page.wait_for_selector("span[data-ng-bind*='acctNumberlast5Digits']", timeout=15000)
+            except:
+                print("Warning: Timeout waiting for Activity page load.")
 
-            # Extract Balance
-            current_balance = 0.0
-            try:
-                # Selector based on user input: <div data-ng-bind-html="balanceInfo.totalBalance ...">$1,695.45 </div>
-                balance_el = self.page.locator("div[data-ng-bind-html*='balanceInfo.totalBalance']").first
-                if balance_el.count() > 0:
-                    balance_text = balance_el.text_content()
-                    # Clean: "$1,695.45 " -> 1695.45
-                    clean_balance = balance_text.replace('$', '').replace(',', '').strip()
-                    current_balance = float(clean_balance)
-            except Exception as e:
-                print(f"Warning: could not parse balance: {e}")
+        last_digits = "00000"
+        unique_id = "AMEX-DEFAULT"
+        
+        try:
+            # Selector based on: <span class="card-member-cell ..."> - 91001</span>
+            acct_el = self.page.locator("span[data-ng-bind*='acctNumberlast5Digits']").first
+            if acct_el.count() > 0:
+                 text = acct_el.text_content() # " - 91001"
+                 match = re.search(r'(\d{4,5})', text)
+                 if match:
+                     last_digits = match.group(1)
+                     unique_id = f"AMEX-{last_digits}"
+        except Exception as e:
+             print(f"Warning: could not parse account digits from Activity page: {e}")
+        
+        print(f"  Found account: {unique_id}")
 
-            # Extract Account Info
-            last_digits = "00000"
-            unique_id = "AMEX-DEFAULT"
-            
-            try:
-                # Selector based on: <span class="card-member-cell ..."> - 91001</span>
-                acct_el = self.page.locator("span[data-ng-bind*='acctNumberlast5Digits']").first
-                if acct_el.count() > 0:
-                     text = acct_el.text_content() # " - 91001"
-                     # Use regex to find digits
-                     match = re.search(r'(\d{4,5})', text)
-                     if match:
-                         last_digits = match.group(1)
-                         unique_id = f"AMEX-{last_digits}"
-            except Exception as e:
-                 print(f"Warning: could not parse account digits: {e}")
-            
-            print(f"  Found account: {unique_id}")
-            print(f"  Balance: ${current_balance}")
+        # --- Step 2: Get Balances from Dashboard ---
+        print("Navigating to Dashboard for balances...")
+        try:
+            self.page.goto("https://global.americanexpress.com/dashboard")
+            self.page.wait_for_selector("[data-locator-id='total_balance_title_value']", timeout=15000)
+        except: 
+             print("Warning: Timeout waiting for dashboard load.")
 
-            account = Account({}, unique_id)
-            account.current_balance = current_balance
-            account.account_name = "American Express"
-            account.currency = "CAD" # Assumption
-            account.type = AccountType.CREDIT_CARD
+        current_balance = 0.0
+        remaining_balance_due = 0.0
+        statement_balance = 0.0
+        payment_due_date = ""
+
+        try:
+            # Extract Balance (Current Balance / Total Balance)
+            # User provided: <span ... data-locator-id="total_balance_title_value">...</span>
+            balance_el = self.page.locator("[data-locator-id='total_balance_title_value']").first
+            if balance_el.count() > 0:
+                balance_text = balance_el.text_content()
+                clean_balance = balance_text.replace('$', '').replace(',', '').strip()
+                current_balance = float(clean_balance)
             
-            return [account]
+            # Extract Remaining Statement Balance
+            # User provided: <span ... data-locator-id="remaining_statement_balance_title_value">...</span>
+            rem_bal_el = self.page.locator("[data-locator-id='remaining_statement_balance_title_value']").first
+            if rem_bal_el.count() > 0:
+                txt = rem_bal_el.text_content().replace('$', '').replace(',', '').strip()
+                if txt:
+                    remaining_balance_due = float(txt)
+
+            # Payment Due Date
+            # Trying to find on Dashboard
+            due_date_el = self.page.locator("[data-locator-id*='payment_due_date']").first
+            if due_date_el.count() > 0:
+                due_txt = due_date_el.text_content().strip()
+                if due_txt:
+                    from .utils import TransactionNormalizer
+                    payment_due_date = TransactionNormalizer.normalize_date(due_txt)
 
         except Exception as e:
-            print(f"Error fetching accounts: {e}")
-            return []
+            print(f"Warning: could not parse dashboard details: {e}")
+
+        print(f"  Balance: ${current_balance}")
+        print(f"  Remaining Balance: ${remaining_balance_due}")
+        print(f"  Payment Due: {payment_due_date}")
+
+        account = Account({}, unique_id)
+        account.current_balance = current_balance
+        account.account_name = "American Express"
+        account.currency = "CAD" # Assumption
+        account.type = AccountType.CREDIT_CARD
+        
+        account.statement_balance = statement_balance # Not extracted yet
+        account.remaining_balance_due = remaining_balance_due
+        account.payment_due_date = payment_due_date
+        
+        return [account]
+
+
 
     def download_transactions(self) -> List[Transaction]:
         """
@@ -232,7 +264,7 @@ class AmexDownloader(BankDownloader):
                     txn.unique_transaction_id = unique_trans_id
                     txn.date = date_str
                     txn.description = clean_desc
-                    txn.payee = clean_desc
+
                     txn.payee_name = payee_name
                     txn.amount = amount
                     txn.currency = "CAD" # Default

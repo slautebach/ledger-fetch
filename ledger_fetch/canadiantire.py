@@ -1,7 +1,8 @@
 import time
 import json
 import uuid
-from datetime import datetime
+import calendar
+from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from .base import BankDownloader
 from .base import BankDownloader
@@ -55,16 +56,16 @@ class CanadianTireDownloader(BankDownloader):
             print(f"Warning: Could not auto-navigate (might be already there): {e}")
 
     def fetch_accounts(self) -> List[Account]:
-        """Fetch accounts from profile API."""
+        """Fetch accounts from profile and account API."""
         print("Fetching profile to get accounts...")
-        api_url = "https://www.ctfs.com/bank/v1/profile/retrieveProfile"
+        profile_url = "https://www.ctfs.com/bank/v1/profile/retrieveProfile"
         accounts = []
         
         try:
+            # 1. Get Profile (for card list and references)
             result = self.page.evaluate("""
                 async (url) => {
                     try {
-                        // Get CSRF token from cookies
                         const cookies = document.cookie.split(';').reduce((acc, cookie) => {
                             const [key, value] = cookie.trim().split('=');
                             acc[key] = value;
@@ -76,100 +77,124 @@ class CanadianTireDownloader(BankDownloader):
                             'Content-Type': 'application/json',
                             'X-Requested-With': 'XMLHttpRequest'
                         };
-                        if (csrfToken) {
-                            headers['csrftoken'] = csrfToken;
-                        }
+                        if (csrfToken) headers['csrftoken'] = csrfToken;
                         
                         const response = await fetch(url, {
-                            method: 'POST',
-                            headers: headers,
-                            credentials: 'include',
-                            body: '{}'
+                            method: 'POST', fields: headers, credentials: 'include', body: '{}', headers: headers
                         });
                         
-                        const text = await response.text();
-                        return {
-                            ok: response.ok,
-                            status: response.status,
-                            text: text
-                        };
-                    } catch (error) {
-                        return { error: error.message };
-                    }
+                        return { ok: response.ok, status: response.status, text: await response.text(), csrf: csrfToken };
+                    } catch (e) { return { error: e.message }; }
                 }
-            """, api_url)
+            """, profile_url)
 
             if "error" in result:
                 print(f"Profile fetch error: {result['error']}")
                 return []
-            elif not result.get("ok"):
-                print(f"Profile API error: {result.get('status')}")
-                return []
-            else:
-                text = result.get("text", "{}")
-                try:
-                    json_response = json.loads(text)
-                    cards = json_response.get("registeredCards", [])
-                    for card in cards:
-                        # Extract info
-                        ref = card.get("transientReference")
-                        display_name = card.get("displayName", "Canadian Tire Options Mastercard")
-                        last_4 = card.get("last4Digits", "")
-                        
-                        if not ref: continue
-                        
-                        unique_id = f"CTFS-{last_4}" if last_4 else f"CTFS-{uuid.uuid4()}"
-                        
-                        acc = Account(card, unique_id)
-                        acc.account_name = display_name
-                        acc.account_number = last_4
-                        acc.type = AccountType.CREDIT_CARD
-                        acc.currency = "CAD"
-                        
-                        # Map Current Balance
-                        # Check various potential keys
-                        balance = card.get("balance") or card.get("currentBalance") or card.get("accountBalance")
-                        if balance is not None:
-                            try:
-                                acc.current_balance = float(balance)
-                            except (ValueError, TypeError):
-                                pass
-                        
-                        accounts.append(acc)
-                        
-                except json.JSONDecodeError as e:
-                    print(f"Error parsing profile JSON: {e}")
+            
+            json_response = json.loads(result.get("text", "{}"))
+            cards = json_response.get("registeredCards", [])
+            csrf_token = result.get("csrf", "")
+
+            for card in cards:
+                ref = card.get("transientReference")
+                if not ref: continue
+                
+                # Basic info
+                display_name = card.get("displayName", "Canadian Tire Options Mastercard")
+                last_4 = card.get("last4Digits", "")
+                unique_id = f"CTFS-{last_4}" if last_4 else f"CTFS-{uuid.uuid4()}"
+                
+                acc = Account(card, unique_id)
+                acc.account_name = display_name
+                acc.account_number = last_4
+                acc.type = AccountType.CREDIT_CARD
+                acc.currency = "CAD"
+                
+                # 2. Fetch Detailed Account Info (for balances and dates)
+                # API: https://www.ctfs.com/dash/v1/account/retrieveAccount
+                print(f"Fetching details for {unique_id}...")
+                details = self._fetch_account_details(ref, csrf_token)
+                
+                if details:
+                    # Update Unique Account ID from API
+                    api_account_id = details.get("accountId")
+                    if api_account_id:
+                        acc.unique_account_id = f"CTFS-{api_account_id}"
+
+                    # Current Balance
+                    # Use API currentBalanceAmt
+                    acc.current_balance = float(details.get("currentBalanceAmt", 0.0))
                     
+                    # Statement Info
+                    # statementDueAmt -> Statement Balance (User preferred statementBalanceDueAmt)
+                    acc.statement_balance = float(details.get("statementBalanceDueAmt", 0.0))
+                    
+                    # statementAmtFullPmt -> Remaining Balance Due (Per User Instruction)
+                    acc.remaining_balance_due = float(details.get("statementAmtFullPmt", 0.0))
+                    
+                    # paymentDueDate -> Due Date
+                    due_date = details.get("paymentDueDate", "")
+                    # paymentDueDate -> Due Date
+                    due_date = details.get("paymentDueDate", "")
+                    if due_date:
+                        acc.payment_due_date = TransactionNormalizer.normalize_date(due_date)
+
+                    # lastStatementDate -> Anchor for transaction fetching
+                    last_stmt = details.get("lastStatementDate", "")
+                    if last_stmt:
+                        # Store as string YYYY-MM-DD
+                        acc.last_statement_date = last_stmt
+                        
+                    print(f"  Found account: {acc.unique_account_id}")
+                    print(f"  Balance: ${acc.current_balance}")
+                    print(f"  Statement Balance: ${acc.statement_balance}")
+                    print(f"  Remaining Due: ${acc.remaining_balance_due}")
+                    print(f"  Due Date: {acc.payment_due_date}")
+                else:
+                     # Fallback to profile balance if API fails
+                     bal = card.get("balance") or card.get("currentBalance") or card.get("accountBalance")
+                     if bal: acc.current_balance = float(bal)
+
+                accounts.append(acc)
+
         except Exception as e:
             print(f"Error fetching accounts: {e}")
+            import traceback
+            traceback.print_exc()
 
-        # Scrape Current Balance from Summary Page
-        if accounts:
-            print("Navigating to Summary page to scrape balance...")
-            try:
-                self.page.goto("https://www.ctfs.com/content/dash/en/private/Summary.html", wait_until="domcontentloaded")
-                self.page.wait_for_selector(".balance-section .current .amount", timeout=15000)
-                
-                balance_text = self.page.inner_text(".balance-section .current .amount")
-                # Expected format: "$1,584.55"
-                # Remove '$', ',' and whitespace
-                clean_balance = balance_text.replace('$', '').replace(',', '').strip()
-                # Handle potential newlines if any
-                clean_balance = clean_balance.split('\n')[0].strip()
-                
-                current_balance = float(clean_balance)
-                print(f"Scraped current balance: {current_balance}")
-                
-                # Assign to the first account
-                accounts[0].current_balance = current_balance
-                
-            except Exception as e:
-                print(f"Warning: Could not scrape balance from Summary page: {e}")
-            finally:
-                # Ensure we return to the details page for transaction fetching
-                self.navigate_to_transactions()
-            
         return accounts
+
+    def _fetch_account_details(self, transient_ref: str, csrf_token: str) -> Dict[str, Any]:
+        """Fetch details from retrieveAccount API."""
+        api_url = "https://www.ctfs.com/dash/v1/account/retrieveAccount"
+        
+        try:
+            result = self.page.evaluate("""
+                async (params) => {
+                    try {
+                        const headers = {
+                            'Content-Type': 'application/json',
+                            'X-Requested-With': 'XMLHttpRequest'
+                        };
+                        if (params.csrf) headers['csrftoken'] = params.csrf;
+                        
+                        const response = await fetch(params.url, {
+                            method: 'POST',
+                            headers: headers,
+                            credentials: 'include',
+                            body: JSON.stringify({ transientReference: params.ref })
+                        });
+                        return { ok: response.ok, text: await response.text() };
+                    } catch (e) { return { error: e.message }; }
+                }
+            """, {'url': api_url, 'csrf': csrf_token, 'ref': transient_ref})
+            
+            if result.get("ok"):
+                return json.loads(result.get("text", "{}"))
+        except:
+            pass
+        return {}
 
     def download_transactions(self) -> List[Transaction]:
         """Fetch transactions via API."""
@@ -185,19 +210,62 @@ class CanadianTireDownloader(BankDownloader):
                 self.save_accounts(accounts)
         
         # 2. Get statement dates (Assuming global/current context)
+        # Ensure we are on the Details page to find the dropdown
+        self.navigate_to_transactions()
+        
+        # For now, we only process the first account
+        target_account = accounts[0]
+        
         statement_dates = self._get_statement_dates()
+        
         if not statement_dates:
-            print("No statement dates found.")
-            return []
-            
+            print("No statement dates found via scraping.")
+
+        # Extrapolate dates based on config
+        days = self.config.canadiantire.days_to_fetch
+        
+        # 1. Find the latest date to start from
+        latest_date_str = None
+        
+        if statement_dates:
+            try:
+                sorted_dates = sorted(
+                    [d for d in statement_dates if d],
+                    key=lambda x: datetime.strptime(x, "%Y-%m-%d"),
+                    reverse=True
+                )
+                latest_date_str = sorted_dates[0]
+            except:
+                pass
+        
+        # Fallback to account.last_statement_date if scraping failed
+        if not latest_date_str and hasattr(target_account, 'last_statement_date') and target_account.last_statement_date:
+            print(f"Using API lastStatementDate as anchor: {target_account.last_statement_date}")
+            latest_date_str = target_account.last_statement_date
+
+        if latest_date_str:
+            try:
+                print(f"Latest available statement: {latest_date_str}. Extrapolating {days} days back...")
+                # 2. Generate dates
+                statement_dates = self._generate_historical_dates(latest_date_str, days)
+                print(f"Generated {len(statement_dates)} statement dates.")
+            except Exception as e:
+                print(f"Error extrapolating dates: {e}.")
+        else:
+             print("Could not find a valid date to start extrapolation.")
+             
+        if self.config.debug:
+            print(f"DEBUG: latest_date_str: {latest_date_str}")
+            print(f"DEBUG: statement_dates: {statement_dates}")
+
+        if not statement_dates:
+             return []
+
         print(f"Fetching transactions for {len(statement_dates)} statement(s)...")
         
         all_transactions = []
         
-        # For now, we only process the first account because statement_dates might be tied to UI context
-        # and we don't know how to switch accounts yet.
-        # But we pass the account object to _fetch_transactions_for_statement
-        target_account = accounts[0]
+        print(f"DEBUG: Processing transactions for Account ID: {target_account.unique_account_id}")
         print(f"Processing account: {target_account.account_name} ({target_account.unique_account_id})")
         
         transient_ref = target_account.raw_data.get("transientReference")
@@ -338,7 +406,7 @@ class CanadianTireDownloader(BankDownloader):
             txn.account_name = account.account_name
             txn.date = date
             txn.description = description
-            txn.payee = description # Original (cleaned) description
+
             txn.payee_name = payee_name # Normalized payee
             txn.amount = amount
             txn.currency = 'CAD'
@@ -348,3 +416,34 @@ class CanadianTireDownloader(BankDownloader):
             transactions.append(txn)
             
         return transactions
+
+    def _generate_historical_dates(self, start_date_str: str, days_back: int) -> List[str]:
+        """Generate a list of monthly dates going back in time."""
+        try:
+            start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+        except ValueError:
+            return [start_date_str]
+            
+        cutoff_date = datetime.now() - timedelta(days=days_back)
+        billing_day = start_date.day
+        
+        dates = []
+        current_date = start_date
+        
+        while current_date >= cutoff_date:
+            dates.append(current_date.strftime("%Y-%m-%d"))
+            
+            # Go back one month
+            year = current_date.year
+            month = current_date.month - 1
+            if month == 0:
+                month = 12
+                year -= 1
+            
+            # Clamp day to valid range for the new month
+            last_day_of_month = calendar.monthrange(year, month)[1]
+            safe_day = min(billing_day, last_day_of_month)
+            
+            current_date = current_date.replace(year=year, month=month, day=safe_day)
+            
+        return dates

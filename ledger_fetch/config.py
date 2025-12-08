@@ -7,11 +7,17 @@ import yaml
 
 DEFAULT_DAYS_TO_FETCH = 1095 # 3 years
 
+class AccountConfig(BaseModel):
+    """Configuration specific to an account."""
+    id: str = Field(..., description="Unique Account ID")
+    invert_credit_transactions: Optional[bool] = None
+
 class BankConfig(BaseModel):
     """Configuration specific to a bank."""
     enabled: bool = True
     invert_credit_transactions: bool = False
     days_to_fetch: int = DEFAULT_DAYS_TO_FETCH
+    accounts: List[AccountConfig] = Field(default_factory=list)
     # Add other bank-specific settings here if needed
 
 class Config(BaseSettings):
@@ -59,6 +65,7 @@ class Config(BaseSettings):
     canadiantire: BankConfig = Field(default_factory=BankConfig)
     bmo: BankConfig = Field(default_factory=BankConfig)
     cibc: BankConfig = Field(default_factory=BankConfig)
+    national_bank: BankConfig = Field(default_factory=BankConfig)
 
     model_config = SettingsConfigDict(
         env_prefix='LEDGER_FETCH_',

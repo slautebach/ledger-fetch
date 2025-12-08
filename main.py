@@ -12,28 +12,30 @@ from ledger_fetch.amex import AmexDownloader
 from ledger_fetch.canadiantire import CanadianTireDownloader
 from ledger_fetch.bmo import BMODownloader
 from ledger_fetch.cibc import CIBCDownloader
+from ledger_fetch.national_bank import NationalBankDownloader
+
+BANKS = {
+    "rbc": RBCDownloader,
+    "amex": AmexDownloader,
+    "wealthsimple": WealthsimpleDownloader,
+    "canadiantire": CanadianTireDownloader,
+    "bmo": BMODownloader,
+    "cibc": CIBCDownloader,
+    "national_bank": NationalBankDownloader,
+}
 
 def get_downloaders(banks: List[str]) -> List[BankDownloader]:
     """Return list of downloader instances based on requested banks."""
     downloaders = []
     
-    if 'all' in banks or 'rbc' in banks:
-        downloaders.append(RBCDownloader())
-        
-    if 'all' in banks or 'wealthsimple' in banks:
-        downloaders.append(WealthsimpleDownloader())
-        
-    if 'all' in banks or 'amex' in banks:
-        downloaders.append(AmexDownloader())
-        
-    if 'all' in banks or 'canadiantire' in banks:
-        downloaders.append(CanadianTireDownloader())
-
-    if 'all' in banks or 'bmo' in banks:
-        downloaders.append(BMODownloader())
-
-    if 'all' in banks or 'cibc' in banks:
-        downloaders.append(CIBCDownloader())
+    requested = set(banks)
+    if 'all' in requested:
+        # Return all instantiated downloaders
+        return [cls() for cls in BANKS.values()]
+    
+    for bank_name, cls in BANKS.items():
+        if bank_name in requested:
+            downloaders.append(cls())
         
     return downloaders
 
@@ -81,7 +83,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ledger Fetch - Financial Transaction Downloader")
     parser.add_argument(
         "--bank", 
-        choices=['all', 'rbc', 'wealthsimple', 'amex', 'canadiantire', 'bmo', 'cibc'], 
+        choices=['all'] + list(BANKS.keys()), 
         default='all',
         help="Specific bank to download from (default: all)"
     )
@@ -148,7 +150,7 @@ def main():
                     import traceback
                     traceback.print_exc()
 
-    run_normalization()        
+    #run_normalization()        
     print("\nAll tasks completed.")
 
 if __name__ == "__main__":
