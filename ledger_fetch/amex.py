@@ -73,7 +73,7 @@ class AmexDownloader(BankDownloader):
                 self.page.goto("https://global.americanexpress.com/activity/recent")
                 # Wait for basic load
                 try:
-                     self.page.wait_for_selector("div[data-ng-bind-html*='balanceInfo.totalBalance']", timeout=15000)
+                     self.page.wait_for_selector("[data-locator-id='total_balance_title_value']", timeout=15000)
                 except: 
                      print("Warning: Timeout waiting for balance element.")
 
