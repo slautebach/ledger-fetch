@@ -76,6 +76,11 @@ const argv = yargs(hideBin(process.argv))
     type: 'string',
     description: 'Path to transactions directory'
   })
+  .option('bank', {
+    alias: 'b',
+    type: 'string',
+    description: 'Specific bank directory to process'
+  })
   .parseSync();
 
 
@@ -146,9 +151,18 @@ async function main() {
 
   console.log(`Scanning for bank directories in: ${transactionsDir}`);
 
-  const bankDirs = fs.readdirSync(transactionsDir)
+  let bankDirs = fs.readdirSync(transactionsDir)
     .map(item => path.join(transactionsDir, item))
     .filter(fullPath => fs.statSync(fullPath).isDirectory());
+
+  if (argv.bank) {
+    const bankName = argv.bank.toLowerCase();
+    bankDirs = bankDirs.filter(dir => path.basename(dir).toLowerCase() === bankName);
+    if (bankDirs.length === 0) {
+      console.error(`Bank "${argv.bank}" not found in ${transactionsDir}`);
+      process.exit(1);
+    }
+  }
 
   console.log(`Found ${bankDirs.length} bank directories.`);
 

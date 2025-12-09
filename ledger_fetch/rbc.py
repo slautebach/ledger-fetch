@@ -1,6 +1,6 @@
 import time
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from .base import BankDownloader
 from .utils import TransactionNormalizer
@@ -254,7 +254,7 @@ class RBCDownloader(BankDownloader):
             print(f"Exception fetching accounts: {e}")
             return []
 
-    def fetch_transactions_for_account(self, account: Account, days: int = 365) -> List[Transaction]:
+    def fetch_transactions_for_account(self, account: Account, days: int = 365) -> Optional[List[Transaction]]:
         """Fetch transactions for a specific account."""
         # Use encrypted account number for API calls if available
         encrypted_id = account.get('encryptedAccountNumber')
@@ -273,7 +273,7 @@ class RBCDownloader(BankDownloader):
             service_path = "transactions/pda/account"
         else:
             print(f"  Skipping API fetch for {account.type} (relying on CSV fallback)")
-            return []
+            return None
             
         # Base URL (try -dbb first as per HAR)
         base_url = "https://www1.royalbank.com/sgw5/digital/transaction-presentation-service-v3-dbb/v3"
@@ -287,7 +287,7 @@ class RBCDownloader(BankDownloader):
             params = f"intervalType=DAY&intervalValue={self.config.rbc.days_to_fetch}&type=ALL&txType=pda&useColtOnly=response"
         else:
              # Should not happen due to check above
-             return []
+             return None
         
         url = f"{base_url}/{service_path}/{encrypted_id}?{params}"
         
@@ -303,9 +303,9 @@ class RBCDownloader(BankDownloader):
                      response = self.page.request.get(url_alt)
                      if response.status != 200:
                          print(f"  Error fetching transactions (retry): {response.status} {response.status_text}")
-                         return []
+                         return None
                 else:
-                    return []
+                    return None
                 
             data = response.json()
             
@@ -326,7 +326,7 @@ class RBCDownloader(BankDownloader):
             
         except Exception as e:
             print(f"  Exception fetching transactions for {account.account_name}: {e}")
-            return []
+            return None
 
     def _process_transaction(self, raw: Dict[str, Any], account: Account) -> Transaction:
         """Process a raw transaction dictionary into a Transaction object."""
@@ -407,15 +407,26 @@ class RBCDownloader(BankDownloader):
         print("\n--- Starting API Fetch ---")
         accounts = self.fetch_accounts()
         
+        successful_api_account_ids = set()
+        
         if accounts:
             self.save_accounts(accounts)
             for account in accounts:
                 txns = self.fetch_transactions_for_account(account)
-                for txn in txns:
-                    tid = txn.unique_transaction_id
-                    if tid and tid not in seen_ids:
-                        all_transactions.append(txn)
-                        seen_ids.add(tid)
+                
+                # If txns is None, it means API skipped it or failed -> We want CSV fallback
+                # If txns is [], it means API worked but found nothing -> We assume API is correct (or we can fallback too, but let's trust API for now)
+                if txns is not None:
+                    # Mark this account as successfully handled by API
+                    num = self._normalize_account_number(account.account_number, account.type == AccountType.CREDIT_CARD)
+                    if num:
+                        successful_api_account_ids.add(f"RBC-{num}")
+                        
+                    for txn in txns:
+                        tid = txn.unique_transaction_id
+                        if tid and tid not in seen_ids:
+                            all_transactions.append(txn)
+                            seen_ids.add(tid)
                 time.sleep(1)
         else:
             print("No accounts found via API.")
@@ -426,14 +437,7 @@ class RBCDownloader(BankDownloader):
             csv_txns = self.download_transactions_csv()
             print(f"Downloaded {len(csv_txns)} transactions via CSV.")
             
-            # Build a set of existing Unique Account IDs from API
-            api_account_ids = set()
-            for acc in accounts:
-                # Re-generate the ID logic to match what we do in _process_transaction and CSV parsing
-                # Logic: Use Account Number
-                num = self._normalize_account_number(acc.account_number, acc.type == AccountType.CREDIT_CARD)
-                if num:
-                    api_account_ids.add(f"RBC-{num}")
+
 
             for txn in csv_txns:
                 # txn is a Transaction object
@@ -447,7 +451,7 @@ class RBCDownloader(BankDownloader):
                     csv_acc_id = "RBC-UNKNOWN"
                 
                 # Check coverage by ID
-                if csv_acc_id in api_account_ids:
+                if csv_acc_id in successful_api_account_ids:
                     continue # Skip, already covered by API
                 
                 # Add transaction
