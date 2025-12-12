@@ -222,3 +222,4 @@ actual-sync/debug*.txt
 /actual-sync/actual_rules.yaml
 /actual-sync/budget-categories.yaml
 /actual-sync/account-map.json
+/actual-sync/config.yaml
