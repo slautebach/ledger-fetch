@@ -123,22 +123,49 @@ password: "your-actual-password"
 sync_id: "your-sync-id" # The ID of the budget file to sync with
 ```
 
-### Usage
+### Available Scripts
 
-To sync your downloaded transactions to Actual Budget:
+Access the available tools via `npm run <script-name>`. All scripts support the `--config-dir` argument.
+
+#### 1. Import Payees
+**Command:** `npm run import-payees`
+**Script:** `import_payees.ts`
+**Purpose:** Pre-populates payees in Actual Budget from a `payee_counts.csv` file (if available). This ensures payees exist before importing transactions or rules.
+
+#### 2. Import Accounts
+**Command:** `npm run import-accounts`
+**Script:** `import-accounts.ts`
+**Purpose:** Bootstraps accounts in Actual Budget by scanning the downloaded `accounts.csv` files. It creates missing accounts and updates the `config/account-map.json` file to link Bank Account IDs to Actual Budget UUIDs.
+
+#### 3. Sync Rules
+**Command:** `npm run sync-rules`
+**Script:** `sync-rules.ts`
+**Purpose:** Performs a bi-directional sync of rules between `config/actual_rules.yaml` and the server.
+- **Push:** Creates or updates rules on the server based on the YAML definition.
+- **Pull:** Downloads new rules from the server and adds them to the YAML file.
+- **Idempotency:** Writes back generated UUIDs to `actual_rules.yaml` to prevent duplicates.
+
+#### 4. Sync Budget Categories
+**Command:** `npm run sync-budget-categories`
+**Script:** `sync-budget-categories.ts`
+**Purpose:** Synchronizes category groups and categories between `config/budget-categories.yaml` and the server. Useful for ensuring a consistent budget structure across different budget files (e.g., dev/prod).
+
+#### 5. Import Transactions (Main)
+**Command:** `npm run import-transactions`
+**Script:** `import-transactions.ts`
+**Purpose:** The core sync script.
+- Scans bank directories for `accounts.csv` and transaction CSVs.
+- Creates accounts if missing (Phase 1).
+- Imports transactions, handling transfers and payee normalization (Phase 2).
+- Performs initial balance reconciliation for new accounts (Phase 3).
+
+### Testing
+
+To test against a different budget or configuration (e.g., a test budget), use the `--config-dir` argument:
 
 ```bash
-cd actual-sync
-npm start
-```
-
-#### Testing / Custom Configuration
-
-We have removed the `--dry-run` flag. To test against a different budget or configuration (e.g., a test budget), use the `--config-dir` argument to point to a different configuration folder.
-
-```bash
-# Run with a specific testing configuration directory
-npm start -- --config-dir "./config-test"
+# Run rules sync against test config
+npm run sync-rules -- --config-dir "./config-test"
 ```
 
 ## Output Structure
