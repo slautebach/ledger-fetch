@@ -15,20 +15,13 @@ import * as api from '@actual-app/api';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import * as yaml from 'js-yaml';
 import csv from 'csv-parser';
 import yargs from 'yargs/yargs';
 import { hideBin } from 'yargs/helpers';
+import { Config, loadConfig, initActual, shutdownActual } from './utils';
 
 // Define interfaces
-interface Config {
-  actual: {
-    server_url: string;
-    password: string;
-    sync_id: string;
-  };
-  output_dir?: string;
-}
+// Config interface removed (imported from utils)
 
 interface CsvTransaction {
   'Unique Transaction ID': string;
@@ -73,7 +66,7 @@ interface ActualTransaction {
 
 // Map CSV Account ID -> Actual Account UUID
 let accountMap: Record<string, string> = {};
-const ACCOUNT_MAP_FILE = path.join(__dirname, 'account-map.json');
+let ACCOUNT_MAP_FILE = path.join(__dirname, 'config', 'account-map.json'); // Default
 
 function loadAccountMap() {
   if (fs.existsSync(ACCOUNT_MAP_FILE)) {
@@ -95,16 +88,10 @@ function saveAccountMap() {
 
 // Parse arguments
 const argv = yargs(hideBin(process.argv))
-  .option('config', {
-    alias: 'c',
+  .option('config-dir', {
     type: 'string',
-    description: 'Path to config file',
-    default: '../config.yaml'
-  })
-  .option('dry-run', {
-    type: 'boolean',
-    description: 'Run without making changes',
-    default: false
+    description: 'Path to config directory',
+    default: './config'
   })
   .option('transactions-dir', {
     alias: 't',
@@ -125,50 +112,29 @@ async function main() {
 
   // 1. Load Config
   let config: Config;
+  const configPath = path.join(argv['config-dir'], 'config.yaml');
   try {
-    const configPath = path.resolve(argv.config);
-    if (!fs.existsSync(configPath)) {
-      console.error(`Config file not found at ${configPath}`);
-      process.exit(1);
-    }
-    const fileContents = fs.readFileSync(configPath, 'utf8');
-    config = yaml.load(fileContents) as Config;
-  } catch (e) {
-    console.error('Error loading config:', e);
+    config = loadConfig(configPath);
+  } catch (e: any) {
+    console.error(e.message);
     process.exit(1);
   }
 
-  if (!config.actual || !config.actual.server_url || !config.actual.password || !config.actual.sync_id) {
-    console.error('Missing "actual" configuration in config.yaml');
-    console.error('Please add: actual: { server_url, password, sync_id }');
-    process.exit(1);
-  }
+  // Update Map Path
+  ACCOUNT_MAP_FILE = path.join(argv['config-dir'], 'account-map.json');
+  loadAccountMap(); // Reload with correct path
 
   // 2. Connect to Actual
-  console.log(`Connecting to Actual Budget at ${config.actual.server_url}...`);
-  const dataDir = path.resolve(__dirname, 'data');
-  if (!fs.existsSync(dataDir)) {
-    console.log(`Creating data directory at ${dataDir}...`);
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-
   try {
-    await api.init({
-      dataDir: dataDir,
-      serverURL: config.actual.server_url,
-      password: config.actual.password,
-    });
-    await api.downloadBudget(config.actual.sync_id);
-    console.log('Connected to budget.');
-  } catch (e) {
-    console.error('Failed to connect to Actual Budget:', e);
+    await initActual(config);
+  } catch (e: any) {
+    console.error(e.message);
     process.exit(1);
   }
 
   // Determine Output Dir (Transactions Dir)
-  const absConfigPath = path.resolve(argv.config);
-  const configDir = path.dirname(absConfigPath);
-  let transactionsDir = config.output_dir ? path.resolve(configDir, config.output_dir) : path.resolve(__dirname, '../../transactions');
+  // Determine Output Dir (Transactions Dir)
+  let transactionsDir = config.transactions_path || path.resolve(__dirname, '../../transactions');
   if (argv['transactions-dir']) {
     transactionsDir = path.resolve(argv['transactions-dir']);
   }
@@ -285,7 +251,7 @@ async function main() {
 
           const isOffBudget = getBudgetStatus(accountType);
 
-          if (!argv['dry-run']) {
+          if (true) {
             try {
               const newId = await api.createAccount({
                 name: accountName,
@@ -303,13 +269,6 @@ async function main() {
               continue;
             }
             newlyCreatedBankLinkIds.add(accountId);
-          } else {
-            console.log(`    [Dry Run] Would create account "${accountName}" (Type: ${accountType}, OffBudget: ${isOffBudget})`);
-            actualAccount = { id: 'dry-run-id', name: accountName } as any;
-            accountsCache.push(actualAccount as any);
-            newlyCreatedBankLinkIds.add(accountId);
-          }
-          if (!argv['dry-run']) {
             await api.sync();
           }
         }
@@ -317,7 +276,7 @@ async function main() {
     }
   }
 
-  if (!argv['dry-run']) {
+  if (true) {
     await api.sync();
     accountsCache = await api.getAccounts();
   }
@@ -327,7 +286,7 @@ async function main() {
   // the appropriate accounts. We rely on the account mapping established in Phase 1.
   console.log('\n--- Phase 2: Transaction Import ---');
   // Refresh cache one last time to be sure
-  if (!argv['dry-run']) {
+  if (true) {
     accountsCache = await api.getAccounts();
   }
 
@@ -394,7 +353,7 @@ async function main() {
 
         if (!actualAccount) {
           console.log(`    Account "${nameToUse}" (${accountId}) not found (not in accounts.csv). Creating on the fly...`);
-          if (!argv['dry-run']) {
+          if (true) {
             try {
               const newId = await api.createAccount({
                 name: nameToUse,
@@ -411,11 +370,6 @@ async function main() {
               console.error(`    Error creating account: ${e.message}`);
               continue; // Skip transactions if account creation failed
             }
-            newlyCreatedBankLinkIds.add(accountId);
-          } else {
-            console.log(`    [Dry Run] Would create account "${nameToUse}"`);
-            actualAccount = { id: 'dry-run-id', name: nameToUse } as any;
-            accountsCache.push(actualAccount as any);
             newlyCreatedBankLinkIds.add(accountId);
           }
         }
@@ -454,18 +408,16 @@ async function main() {
         });
 
         console.log(`    Importing ${actualTransactions.length} transactions for account "${actualAccount.name}"...`);
-        if (!argv['dry-run']) {
+        if (true) {
           try {
             const result = await api.importTransactions(actualAccount.id, actualTransactions);
             console.log(`      Added: ${result.added.length}, Updated: ${result.updated.length}, Errors: ${result.errors ? result.errors.length : 0}`);
           } catch (e: any) {
             console.error(`      Error importing transactions: ${e.message}`);
           }
-        } else {
-          console.log(`      [Dry Run] Would import ${actualTransactions.length} transactions.`);
         }
       }
-      if (!argv['dry-run']) {
+      if (true) {
         console.log(`    Syncing transactions for ${path.basename(file)}...`);
         await api.sync();
       }
@@ -476,7 +428,7 @@ async function main() {
   // In this phase, we compare the "Current Balance" from the bank's accounts.csv
   // with the calculated balance in Actual Budget. If there's a mismatch for a NEW account,
   // we create an initial balance adjustment transaction.
-  if (!argv['dry-run']) {
+  if (true) {
     console.log('\n--- Phase 3: Reconciliation ---');
     // Refresh cache to get latest balances/accounts
     accountsCache = await api.getAccounts();
@@ -539,15 +491,13 @@ async function main() {
               account: actualAccount.id
             };
 
-            if (!argv['dry-run']) {
+            if (true) {
               try {
                 await api.importTransactions(actualAccount.id, [reconciliationTx]);
                 console.log(`      SUCCESS: Created initial reconciliation transaction for ${diff / 100}`);
               } catch (e: any) {
                 console.error(`      ERROR: Failed to create reconciliation transaction: ${e.message}`);
               }
-            } else {
-              console.log(`      [Dry Run] Would create transaction: ${JSON.stringify(reconciliationTx)}`);
             }
           } else {
             console.log(`    -> Account is EXISTING. Skipping auto-reconciliation.`);
@@ -563,13 +513,13 @@ async function main() {
   }
 
   // Sync after processing all files
-  if (!argv['dry-run']) {
+  if (true) {
     console.log('Syncing with server...');
     await api.sync();
   }
 
   console.log('Sync complete.');
-  await api.shutdown();
+  await shutdownActual();
 }
 
 main().catch(err => {

@@ -11,20 +11,13 @@
 import * as api from '@actual-app/api';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as yaml from 'js-yaml';
 import csv from 'csv-parser';
 import yargs from 'yargs/yargs';
 import { hideBin } from 'yargs/helpers';
+import { Config, loadConfig, initActual, shutdownActual } from './utils';
 
 // Define interfaces
-interface Config {
-    actual: {
-        server_url: string;
-        password: string;
-        sync_id: string;
-    };
-    output_dir?: string;
-}
+// Config interface removed (imported from utils)
 
 interface CsvAccount {
     'Unique Account ID': string;
@@ -42,7 +35,7 @@ interface CsvAccount {
 
 // Map CSV Account ID -> Actual Account UUID
 let accountMap: Record<string, string> = {};
-const ACCOUNT_MAP_FILE = path.join(__dirname, 'account-map.json');
+let ACCOUNT_MAP_FILE = path.join(__dirname, 'config', 'account-map.json'); // Default, will overwrite in main based on config-dir
 
 function loadAccountMap() {
     if (fs.existsSync(ACCOUNT_MAP_FILE)) {
@@ -67,17 +60,12 @@ function saveAccountMap() {
 }
 
 // Parse arguments
+// Parse arguments
 const argv = yargs(hideBin(process.argv))
-    .option('config', {
-        alias: 'c',
+    .option('config-dir', {
         type: 'string',
-        description: 'Path to config file',
-        default: '../config.yaml'
-    })
-    .option('dry-run', {
-        type: 'boolean',
-        description: 'Run without making changes',
-        default: false
+        description: 'Path to config directory',
+        default: './config'
     })
     .option('transactions-dir', {
         alias: 't',
@@ -92,48 +80,29 @@ async function main() {
 
     // 1. Load Config
     let config: Config;
+    const configPath = path.join(argv['config-dir'], 'config.yaml');
     try {
-        const configPath = path.resolve(argv.config);
-        if (!fs.existsSync(configPath)) {
-            console.error(`Config file not found at ${configPath}`);
-            process.exit(1);
-        }
-        const fileContents = fs.readFileSync(configPath, 'utf8');
-        config = yaml.load(fileContents) as Config;
-    } catch (e) {
-        console.error('Error loading config:', e);
-        process.exit(1);
-    }
-
-    if (!config.actual || !config.actual.server_url || !config.actual.password || !config.actual.sync_id) {
-        console.error('Missing "actual" configuration in config.yaml');
+        config = loadConfig(configPath);
+    } catch (e: any) {
+        console.error(e.message);
         process.exit(1);
     }
 
     // 2. Connect to Actual
-    console.log(`Connecting to Actual Budget at ${config.actual.server_url}...`);
-    const dataDir = path.resolve(__dirname, 'data');
-    if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-    }
-
     try {
-        await api.init({
-            dataDir: dataDir,
-            serverURL: config.actual.server_url,
-            password: config.actual.password,
-        });
-        await api.downloadBudget(config.actual.sync_id);
-        console.log('Connected to budget.');
-    } catch (e) {
-        console.error('Failed to connect to Actual Budget:', e);
+        await initActual(config);
+    } catch (e: any) {
+        console.error(e.message);
         process.exit(1);
     }
 
+    // Update ACCOUNT_MAP_FILE based on config dir
+    ACCOUNT_MAP_FILE = path.join(argv['config-dir'], 'account-map.json');
+    loadAccountMap();
+
     // 3. Determine Transactions Dir
-    const absConfigPath = path.resolve(argv.config);
-    const configDir = path.dirname(absConfigPath);
-    let transactionsDir = config.output_dir ? path.resolve(configDir, config.output_dir) : path.resolve(__dirname, '../../transactions');
+    // 3. Determine Transactions Dir
+    let transactionsDir = config.transactions_path || path.resolve(__dirname, '../../transactions');
     if (argv['transactions-dir']) {
         transactionsDir = path.resolve(argv['transactions-dir']);
     }
@@ -219,25 +188,21 @@ async function main() {
 
                     const isOffBudget = getBudgetStatus(accountType);
 
-                    if (!argv['dry-run']) {
-                        try {
-                            const newId = await api.createAccount({
-                                name: accountName,
-                                offbudget: isOffBudget
-                            });
-                            actualAccount = { id: newId, name: accountName } as any;
-                            accountsCache.push(actualAccount as any);
+                    try {
+                        const newId = await api.createAccount({
+                            name: accountName,
+                            offbudget: isOffBudget
+                        });
+                        actualAccount = { id: newId, name: accountName } as any;
+                        accountsCache.push(actualAccount as any);
 
-                            accountMap[accountId] = newId;
-                            saveAccountMap();
-                            console.log(`  -> Created account with ID: ${newId}`);
+                        accountMap[accountId] = newId;
+                        saveAccountMap();
+                        console.log(`  -> Created account with ID: ${newId}`);
 
-                        } catch (e: any) {
-                            console.error(`  Error creating account: ${e.message}`);
-                            continue;
-                        }
-                    } else {
-                        console.log(`  [Dry Run] Would create account "${accountName}" (Type: ${accountType}, OffBudget: ${isOffBudget})`);
+                    } catch (e: any) {
+                        console.error(`  Error creating account: ${e.message}`);
+                        continue;
                     }
                 }
             }
@@ -245,7 +210,7 @@ async function main() {
     }
 
     console.log('Done.');
-    await api.shutdown();
+    await shutdownActual();
 }
 
 main().catch(err => {

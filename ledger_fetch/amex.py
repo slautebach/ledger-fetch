@@ -185,7 +185,7 @@ class AmexDownloader(BankDownloader):
         except Exception as e:
             print(f"Error fetching transactions: {e}")
             if self.config.debug:
-                self.page.screenshot(path=self.config.output_dir / "amex_error.png")
+                self.page.screenshot(path=self.config.transactions_path / "amex_error.png")
             return []
 
     def _fetch_transactions_api(self, start_date: str, end_date: str) -> Dict[str, Any]:

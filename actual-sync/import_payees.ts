@@ -9,21 +9,14 @@
 import * as api from '@actual-app/api';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as yaml from 'js-yaml';
 import csv from 'csv-parser'; // Import default export from csv-parser
+import { Config, loadConfig, initActual, shutdownActual } from './utils';
 
 // --- Configuration ---
-const CONFIG_PATH = path.resolve('../config.yaml');
-const PAYEES_CSV_PATH = path.resolve('../../transactions/payee_counts.csv');
+// CONFIG_PATH removed
 
-// --- Interfaces ---
-interface Config {
-    actual: {
-        server_url: string;
-        password: string;
-        sync_id: string;
-    };
-}
+
+// Config interface removed
 
 interface PayeeRow {
     Payee: string;
@@ -34,43 +27,36 @@ interface PayeeRow {
 async function main() {
     console.log('--- Starting Payee Import ---');
 
+    // Usage: ts-node import_payees.ts [--config-dir <path>]
+    const args = process.argv.slice(2);
+    let configDir = './config';
+    const configDirIndex = args.indexOf('--config-dir');
+    if (configDirIndex !== -1 && args.length > configDirIndex + 1) {
+        configDir = args[configDirIndex + 1];
+    }
+    const resolvedConfigDir = path.resolve(configDir);
+    const configPath = path.join(resolvedConfigDir, 'config.yaml');
+
     // 1. Load Config
-    if (!fs.existsSync(CONFIG_PATH)) {
-        console.error(`Config file not found: ${CONFIG_PATH}`);
-        process.exit(1);
-    }
-    const config = yaml.load(fs.readFileSync(CONFIG_PATH, 'utf8')) as Config;
-
-    // 2. Validate Config
-    if (!config.actual || !config.actual.server_url || !config.actual.password || !config.actual.sync_id) {
-        console.error('Missing "actual" configuration in config.yaml');
-        process.exit(1);
-    }
-
-    // 3. Connect to Actual
-    console.log('Connecting to Actual Budget...');
-    console.log(`  Server: ${config.actual.server_url}`);
-    console.log(`  Sync ID: ${config.actual.sync_id}`);
-
-    const dataDir = path.resolve(__dirname, 'data');
-    if (!fs.existsSync(dataDir)) {
-        console.log(`Creating data directory at ${dataDir}...`);
-        fs.mkdirSync(dataDir, { recursive: true });
-    }
-
+    let config: Config;
     try {
-        await api.init({
-            dataDir: dataDir,
-            serverURL: config.actual.server_url,
-            password: config.actual.password,
-        });
-        console.log('Initialized. Downloading budget...');
-        await api.downloadBudget(config.actual.sync_id);
-        console.log('Connected.');
+        config = loadConfig(configPath);
     } catch (e: any) {
-        console.error('Connection Error:', e.message);
+        console.error(e.message);
         process.exit(1);
     }
+
+    // 2. Connect to Actual
+    try {
+        await initActual(config);
+    } catch (e: any) {
+        console.error(e.message);
+        process.exit(1);
+    }
+
+    // 3. Determine Transactions Dir
+    const transactionsDir = config.transactions_path || path.resolve(__dirname, '../../transactions');
+    const payeesCsvPath = path.join(transactionsDir, 'payee_counts.csv');
 
     // 4. Fetch Existing Payees
     console.log('Fetching existing payees...');
@@ -82,9 +68,9 @@ async function main() {
 
     // 5. Read CSV and Import
     // We stream the CSV file to handle large datasets efficiently.
-    console.log(`Reading CSV from: ${PAYEES_CSV_PATH}`);
-    if (!fs.existsSync(PAYEES_CSV_PATH)) {
-        console.error(`CSV file not found: ${PAYEES_CSV_PATH}`);
+    console.log(`Reading CSV from: ${payeesCsvPath}`);
+    if (!fs.existsSync(payeesCsvPath)) {
+        console.error(`CSV file not found: ${payeesCsvPath}`);
         await api.shutdown();
         process.exit(1);
     }
@@ -93,7 +79,7 @@ async function main() {
 
     // Promisify the CSV reading
     await new Promise<void>((resolve, reject) => {
-        fs.createReadStream(PAYEES_CSV_PATH)
+        fs.createReadStream(payeesCsvPath)
             .pipe(csv())
             .on('data', (row: PayeeRow) => {
                 if (row.Payee) {
@@ -133,8 +119,8 @@ async function main() {
     }
 
     console.log('Syncing...');
-    await api.shutdown(); // Shutdown implies sync usually, but verify? 
-    // api.shutdown() docs say "Clean up and save data." which usually syncs if online.
+    await api.sync();
+    await shutdownActual();
     console.log('Done.');
 }
 

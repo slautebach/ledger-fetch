@@ -13,7 +13,7 @@ from ledger_fetch.config import settings
 
 def count_payees():
     # Use the output directory from settings
-    transactions_dir = settings.output_dir
+    transactions_dir = settings.transactions_path
     
     print(f"Scanning files in {transactions_dir.resolve()}...")
     

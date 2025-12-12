@@ -28,7 +28,7 @@ def link_transfers():
     parser.add_argument("--clear-transfers", action="store_true", help="Clear all existing transfer links before processing.")
     args = parser.parse_args()
 
-    output_dir = settings.output_dir
+    output_dir = settings.transactions_path
     log_file = output_dir / "ambiguous_transfers.log"
     print(f"Scanning for transaction files in {output_dir.resolve()}...")
     

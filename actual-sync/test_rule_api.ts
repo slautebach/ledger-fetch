@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 
 // Reuse config loading from index.ts (simplified)
-const configPath = path.resolve('../config.yaml');
+const configPath = path.resolve('./config.yaml');
 const config = yaml.load(fs.readFileSync(configPath, 'utf8')) as any;
 
 async function main() {

@@ -25,17 +25,27 @@ export interface CategoriesYaml {
 
 export class CategoryImporter {
     private categoriesYaml!: CategoriesYaml;
+    private yamlPath: string;
 
     constructor(yamlPath: string) {
-        if (!fs.existsSync(yamlPath)) {
-            throw new Error(`Categories file not found at ${yamlPath}`);
+        this.yamlPath = yamlPath;
+        if (fs.existsSync(yamlPath)) {
+            const fileContents = fs.readFileSync(yamlPath, 'utf8');
+            this.categoriesYaml = yaml.load(fileContents) as CategoriesYaml;
+        } else {
+            console.log(`Categories file not found at ${yamlPath}. Starting with empty list.`);
         }
-        const fileContents = fs.readFileSync(yamlPath, 'utf8');
-        this.categoriesYaml = yaml.load(fileContents) as CategoriesYaml;
+
+        if (!this.categoriesYaml) {
+            this.categoriesYaml = { groups: [] };
+        }
+        if (!this.categoriesYaml.groups) {
+            this.categoriesYaml.groups = [];
+        }
     }
 
-    async import(dryRun: boolean = false) {
-        console.log(`Starting Category Import (Dry Run: ${dryRun})...`);
+    async import() {
+        console.log(`Starting Category Import...`);
 
         // 1. Fetch Existing Groups and Categories
         // We need to know what exists to avoid creating duplicates.
@@ -55,22 +65,16 @@ export class CategoryImporter {
 
             if (!group) {
                 console.log(`Group "${yamlGroup.name}" does not exist. Creating...`);
-                if (!dryRun) {
-                    try {
-                        const newGroupId = await api.createCategoryGroup({
-                            name: yamlGroup.name,
-                            is_income: yamlGroup.is_income || false
-                        });
-                        // Construct a local representation of the new group
-                        group = { id: newGroupId, name: yamlGroup.name, categories: [] };
-                    } catch (e: any) {
-                        console.error(`  Error creating group "${yamlGroup.name}": ${e.message}`);
-                        continue;
-                    }
-                } else {
-                    console.log(`  [Dry Run] Would create group "${yamlGroup.name}"`);
-                    // Mock group for dry-run to proceed with category checks
-                    group = { id: 'dry-run-group-' + yamlGroup.name, name: yamlGroup.name, categories: [] };
+                try {
+                    const newGroupId = await api.createCategoryGroup({
+                        name: yamlGroup.name,
+                        is_income: yamlGroup.is_income || false
+                    });
+                    // Construct a local representation of the new group
+                    group = { id: newGroupId, name: yamlGroup.name, categories: [] };
+                } catch (e: any) {
+                    console.error(`  Error creating group "${yamlGroup.name}": ${e.message}`);
+                    continue;
                 }
             } else {
                 console.log(`Group "${yamlGroup.name}" exists.`);
@@ -81,26 +85,22 @@ export class CategoryImporter {
             if (yamlGroup.categories && group) {
                 for (const yamlCategory of yamlGroup.categories) {
                     // Case-insensitive check
-                    const category = group.categories.find((c: any) => c.name.toLowerCase().trim() === yamlCategory.name.toLowerCase().trim());
+                    const category = group.categories?.find((c: any) => c.name.toLowerCase().trim() === yamlCategory.name.toLowerCase().trim());
 
                     if (!category) {
                         console.log(`  Category "${yamlCategory.name}" does not exist in group "${yamlGroup.name}". Creating...`);
-                        if (!dryRun) {
-                            try {
-                                // Ensure we have a real ID before trying to create a category
-                                if (group.id && !group.id.startsWith('dry-run')) {
-                                    await api.createCategory({
-                                        name: yamlCategory.name,
-                                        group_id: group.id
-                                    });
-                                } else {
-                                    console.log(`    Skipping creation because group ID is temporary.`);
-                                }
-                            } catch (e: any) {
-                                console.error(`    Error creating category "${yamlCategory.name}": ${e.message}`);
+                        try {
+                            // Ensure we have a real ID before trying to create a category
+                            if (group.id) {
+                                await api.createCategory({
+                                    name: yamlCategory.name,
+                                    group_id: group.id
+                                });
+                            } else {
+                                console.log(`    Skipping creation because group ID is missing.`);
                             }
-                        } else {
-                            console.log(`    [Dry Run] Would create category "${yamlCategory.name}" in group "${yamlGroup.name}"`);
+                        } catch (e: any) {
+                            console.error(`    Error creating category "${yamlCategory.name}": ${e.message}`);
                         }
                     } else {
                         // console.log(`  Category "${yamlCategory.name}" already exists.`);
@@ -110,10 +110,63 @@ export class CategoryImporter {
         }
 
 
-        if (!dryRun) {
-            console.log('Syncing changes...');
-            await api.sync();
-        }
+        console.log('Syncing changes...');
+        await api.sync();
         console.log('Category import complete.');
+    }
+
+    async pullMissingCategories() {
+        console.log('Checking for missing categories on server...');
+        const existingGroups = await api.getCategoryGroups();
+        let changesMade = false;
+
+        // Ensure we have a valid object to work with
+        if (!this.categoriesYaml) {
+            this.categoriesYaml = { groups: [] };
+        }
+        if (!this.categoriesYaml.groups) {
+            this.categoriesYaml.groups = [];
+        }
+
+        // Create a copy of the current YAML structure to modify, or just modify in place?
+        // Modifying in place is easier if we want import() to see changes immediately.
+        // Let's modify in place.
+        const yamlData = this.categoriesYaml;
+
+        for (const serverGroup of existingGroups) {
+            let localGroup = yamlData.groups.find(g => g.name === serverGroup.name);
+
+            if (!localGroup) {
+                console.log(`  Found new group on server: "${serverGroup.name}". Adding to local YAML.`);
+                localGroup = {
+                    name: serverGroup.name,
+                    is_income: serverGroup.is_income || false,
+                    categories: []
+                };
+                yamlData.groups.push(localGroup);
+                changesMade = true;
+            }
+
+            // Check categories within the group
+            if (serverGroup.categories) {
+                for (const serverCat of serverGroup.categories) {
+                    const localCat = localGroup.categories.find(c => c.name === serverCat.name);
+                    if (!localCat) {
+                        console.log(`  Found new category on server: "${serverCat.name}" (in group "${serverGroup.name}"). Adding to local YAML.`);
+                        localGroup.categories.push({ name: serverCat.name });
+                        changesMade = true;
+                    }
+                }
+            }
+        }
+
+        if (changesMade) {
+            console.log('Writing updated categories to budget-categories.yaml...');
+            // Convert back to YAML
+            const yamlString = yaml.dump(yamlData, { lineWidth: -1, noRefs: true });
+            fs.writeFileSync(this.yamlPath, yamlString, 'utf8');
+        } else {
+            console.log('No missing categories found on server.');
+        }
     }
 }

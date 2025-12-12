@@ -14,9 +14,12 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 
 // --- Configuration ---
-const CONFIG_PATH = path.resolve('../config.yaml');
-const RULES_YAML_PATH = path.resolve('./actual_rules.yaml');
-const ACCOUNT_MAP_PATH = path.resolve(__dirname, 'account-map.json');
+import { Config, loadConfig, initActual, shutdownActual } from './utils';
+
+// --- Configuration ---
+// CONFIG_PATH removed (using default ./config.yaml via loadConfig or hardcoded)
+
+// Paths are now dynamic based on config-dir argument
 
 // --- Interfaces ---
 interface YamlCondition {
@@ -29,6 +32,7 @@ interface YamlAction {
     field: string;
     op?: string;
     value: any;
+    id?: string; // Optional GUID for robust matching
 }
 
 interface YamlRule {
@@ -79,55 +83,49 @@ function rulesEqual(r1: any, r2: any): boolean {
 // --- Main ---
 // --- Main ---
 async function main() {
-    console.log('--- Starting Rule Import ---');
+    const args = process.argv.slice(2);
+    // Usage: ts-node sync-rules.ts [--config-dir <path>]
+    let configDir = './config';
+    const configDirIndex = args.indexOf('--config-dir');
+    if (configDirIndex !== -1 && args.length > configDirIndex + 1) {
+        configDir = args[configDirIndex + 1];
+    }
+    const resolvedConfigDir = path.resolve(configDir);
+    const rulesYamlPath = path.join(resolvedConfigDir, 'actual_rules.yaml');
+    const accountMapPath = path.join(resolvedConfigDir, 'account-map.json');
+    const configPath = path.join(resolvedConfigDir, 'config.yaml');
+
+    console.log(`--- Starting Rule Import ---`);
+    console.log(`Using config directory: ${resolvedConfigDir}`);
 
     // 1. Load Config
-    // Loads connection details for Actual Budget
-    if (!fs.existsSync(CONFIG_PATH)) {
-        console.error(`Config file not found: ${CONFIG_PATH}`);
+    let config: Config;
+    try {
+        config = loadConfig(configPath);
+    } catch (e: any) {
+        console.error(e.message);
         process.exit(1);
     }
-    const config = yaml.load(fs.readFileSync(CONFIG_PATH, 'utf8')) as any;
 
     // 2. Load Rules YAML
-    if (!fs.existsSync(RULES_YAML_PATH)) {
-        console.error(`Rules file not found: ${RULES_YAML_PATH}`);
-        process.exit(1);
+    // 2. Load Rules YAML
+    let rules: YamlRule[] = [];
+    if (fs.existsSync(rulesYamlPath)) {
+        const yamlContent = fs.readFileSync(rulesYamlPath, 'utf8');
+        const rulesData = yaml.load(yamlContent) as YamlFile;
+        rules = rulesData ? rulesData.rules : [];
+        console.log(`Loaded ${rules.length} rules from YAML.`);
+    } else {
+        console.log(`Rules file not found at ${rulesYamlPath}. Starting with empty rules list.`);
     }
-    const yamlContent = fs.readFileSync(RULES_YAML_PATH, 'utf8');
-    const rulesData = yaml.load(yamlContent) as YamlFile;
-    const rules = rulesData.rules;
 
     console.log(`Loaded ${rules.length} rules from YAML.`);
 
     // 3. Connect to Actual
-    console.log('Connecting to Actual Budget...');
-
-    // Trim values to avoid whitespace issues
-    const serverURL = config.actual.server_url.trim();
-    const syncID = config.actual.sync_id.trim();
-    const password = config.actual.password.trim();
-
-    console.log(`  Server: ${serverURL}`);
-    console.log(`  Sync ID: ${syncID}`);
-
-    const dataDir = path.resolve(__dirname, 'data');
-    if (!fs.existsSync(dataDir)) {
-        console.log(`Creating data directory at ${dataDir}...`);
-        fs.mkdirSync(dataDir, { recursive: true });
-    }
-
     try {
-        await api.init({
-            dataDir: dataDir,
-            serverURL: serverURL,
-            password: password,
-        });
-        console.log('Initialized. Downloading budget...');
-        await api.downloadBudget(syncID);
-        console.log('Connected.');
+        await initActual(config);
     } catch (e: any) {
-        console.error('Connection Error:', e);
+        console.error(e.message);
         process.exit(1);
     }
 
@@ -141,12 +139,28 @@ async function main() {
         payeeMap.set(p.name, p.id);
     }
 
-    // 4b. Load Account Map
+    // 4b. Fetch Existing Categories (for lookup)
+    console.log('Fetching existing categories...');
+    const categoryGroups = await api.getCategoryGroups();
+    const categoryNameMap = new Map<string, string>(); // Name -> ID
+    const categoryIdMap = new Map<string, string>(); // ID -> Name
+
+    for (const group of categoryGroups) {
+        if (group.categories) {
+            for (const cat of group.categories) {
+                categoryNameMap.set(cat.name, cat.id);
+                categoryIdMap.set(cat.id, cat.name);
+            }
+        }
+    }
+    console.log(`  Mapped ${categoryNameMap.size} categories.`);
+
+    // 4c. Load Account Map
     console.log('Loading Account Map...');
     let accountMap: Record<string, string> = {};
-    if (fs.existsSync(ACCOUNT_MAP_PATH)) {
+    if (fs.existsSync(accountMapPath)) {
         try {
-            accountMap = JSON.parse(fs.readFileSync(ACCOUNT_MAP_PATH, 'utf8'));
+            accountMap = JSON.parse(fs.readFileSync(accountMapPath, 'utf8'));
             console.log(`  Loaded ${Object.keys(accountMap).length} account mappings.`);
         } catch (e) {
             console.error('  Error loading account map:', e);
@@ -161,6 +175,10 @@ async function main() {
         // Check actions
         for (const a of r.actions) {
             if (a.field === 'payee' && a.value) {
+                // If it's a name, we ensure it exists. If it's an ID, we assume it exists (or we can't create it anyway)
+                // But we don't distinguish yet.
+                // However, updated logic: if 'id' is present, 'value' is name. If 'id' is missing, 'value' is name.
+                // So 'value' is consistently name-ish.
                 if (Array.isArray(a.value)) {
                     a.value.forEach((v: string) => payeesToEnsure.add(v));
                 } else {
@@ -182,7 +200,26 @@ async function main() {
 
     // Create missing payees
     for (const payeeName of payeesToEnsure) {
+        // Check if it's already an ID (heuristic: uuid-like?)
+        // Actually, if it's in payeeMap values, it's an ID.
+        // But payeeMap keys are names.
+        if (payeeMap.has(payeeName)) continue; // It's a known name
+
+        // What if payeeName is actually an ID? Use regex or check values?
+        // For simplicity, we assume values in YAML are Names unless purely ID.
+        // Current usage implies they are Names.
+
         if (!payeeMap.has(payeeName)) {
+            // Check if it's an ID
+            let isId = false;
+            for (const id of payeeMap.values()) {
+                if (id === payeeName) {
+                    isId = true;
+                    break;
+                }
+            }
+            if (isId) continue;
+
             console.log(`Payee '${payeeName}' not found. Creating...`);
             try {
                 const newPayeeId = await api.createPayee({ name: payeeName });
@@ -202,8 +239,106 @@ async function main() {
         existingRulesMap.set(r.id, r);
     }
 
-    // 6. Iterate and Upsert
+    // 5b. Pull Missing Rules from Server (Bidirectional Sync)
+    console.log('Checking for new rules on server...');
+
+    // Create reverse maps for ID -> Name lookup
+    const payeeIdToName = new Map<string, string>();
+    for (const [name, id] of payeeMap.entries()) {
+        payeeIdToName.set(id, name);
+    }
+
+    const accountIdToName = new Map<string, string>();
+    for (const [name, id] of Object.entries(accountMap)) {
+        // accountMap is "Local ID" -> "Actual UUID"
+        // We need "Actual UUID" -> "Local ID"
+        accountIdToName.set(id, name);
+    }
+
+    let localRulesUpdated = false;
     let changesMade = false;
+    const localRuleIds = new Set(rules.map(r => r.id).filter(id => !!id));
+
+    for (const serverRule of existingRules) {
+        if (!localRuleIds.has(serverRule.id)) {
+            console.log(`  Found new rule on server: ${serverRule.id}. Adding to local YAML.`);
+
+            // Convert Server Rule -> YAML Rule
+            const newRule: YamlRule = {
+                id: serverRule.id,
+                stage: serverRule.stage || undefined, // 'pre' is null in API, checking if we need to map back
+                op: serverRule.conditionsOp === 'and' ? undefined : serverRule.conditionsOp,
+                conditions: serverRule.conditions.map((c: any) => {
+                    let val = c.value;
+                    if (c.field === 'payee' && val) {
+                        if (Array.isArray(val)) {
+                            val = val.map((v: string) => payeeIdToName.get(v) || v);
+                        } else {
+                            val = payeeIdToName.get(val) || val;
+                        }
+                    }
+                    if (c.field === 'account' && val) {
+                        val = accountIdToName.get(val) || val;
+                    }
+                    return {
+                        field: c.field,
+                        op: c.op,
+                        value: val
+                    };
+                }),
+                actions: serverRule.actions.map((a: any) => {
+                    let val = a.value;
+                    let idVal: string | undefined = undefined;
+
+                    if (a.field === 'payee' && val) {
+                        if (Array.isArray(val)) {
+                            // Arrays not supported for Actions typically
+                            // If it IS an array, we can't map it to a single Name/ID pair easily for 'set'
+                            // Just map values if possible
+                            val = val.map((v: string) => payeeIdToName.get(v) || v);
+                        } else {
+                            const name = payeeIdToName.get(val);
+                            if (name) {
+                                idVal = val;
+                                val = name;
+                            }
+                        }
+                    } else if (a.field === 'category' && val) {
+                        const name = categoryIdMap.get(val);
+                        if (name) {
+                            idVal = val;
+                            val = name;
+                        } else {
+                            // Keep ID if name not found
+                        }
+                    } else if (a.field === 'account' && val) {
+                        val = accountIdToName.get(val) || val;
+                    }
+
+                    const actionObj: YamlAction = {
+                        field: a.field,
+                        op: a.op,
+                        value: val
+                    };
+                    if (idVal) {
+                        actionObj.id = idVal;
+                    }
+                    return actionObj;
+                })
+            };
+
+            // Cleanup defaults
+            if (newRule.stage === null) delete newRule.stage;
+            if (newRule.op === 'and') delete newRule.op;
+
+            rules.push(newRule);
+            localRulesUpdated = true;
+            changesMade = true; // Flag to ensure we write back
+        }
+    }
+
+    // 6. Iterate and Upsert
+    // let changesMade = false; // Already defined above
 
     for (let i = 0; i < rules.length; i++) {
         const r = rules[i];
@@ -236,18 +371,34 @@ async function main() {
             }),
             actions: r.actions.map(a => {
                 let val = a.value;
-                if (a.field === 'payee') {
-                    if (Array.isArray(val)) {
-                        val = val.map((v: string) => payeeMap.has(v) ? payeeMap.get(v) : v);
-                    } else if (payeeMap.has(val)) {
-                        val = payeeMap.get(val);
+                const explicitId = a.id;
+
+                // If explicit ID is provided, use it.
+                if (explicitId) {
+                    val = explicitId;
+                } else {
+                    // Resolve Name -> ID
+                    if (a.field === 'payee') {
+                        if (Array.isArray(val)) {
+                            val = val.map((v: string) => payeeMap.has(v) ? payeeMap.get(v) : v);
+                        } else if (payeeMap.has(val)) {
+                            val = payeeMap.get(val);
+                        }
+                    }
+                    if (a.field === 'category') {
+                        // Resolve Category Name -> ID
+                        if (categoryNameMap.has(val)) {
+                            val = categoryNameMap.get(val);
+                        }
+                        // Note: If val was already an ID, it won't be in name map, so it stays as is.
+                    }
+                    if (a.field === 'account') {
+                        if (accountMap[val]) {
+                            val = accountMap[val];
+                        }
                     }
                 }
-                if (a.field === 'account') {
-                    if (accountMap[val]) {
-                        val = accountMap[val];
-                    }
-                }
+
                 return {
                     field: a.field,
                     op: a.op || 'set', // Default to 'set'
@@ -261,19 +412,15 @@ async function main() {
                 // UPDATE
                 if (existingRulesMap.has(r.id)) {
                     const existing = existingRulesMap.get(r.id);
-                    rulePayload.id = r.id; // ensure ID is in payload for creating new ones, but for compare we need it
-                    // To compare, we should form the "expected" object.
-                    // The API returns explicit objects, our rulePayload is what we WANT.
-                    // We compare rulePayload vs existing.
+                    rulePayload.id = r.id;
                     if (rulesEqual(rulePayload, existing)) {
-                        console.log(`[${i + 1}/${rules.length}] Skipping rule ${r.id} (no changes)`);
                         continue;
                     }
-                }
 
-                console.log(`[${i + 1}/${rules.length}] Updating rule ${r.id}...`);
-                rulePayload.id = r.id;
-                await api.updateRule(rulePayload);
+                    console.log(`[${i + 1}/${rules.length}] Updating rule ${r.id}...`);
+                    rulePayload.id = r.id;
+                    await api.updateRule(rulePayload);
+                }
             } else {
                 // CREATE
                 console.log(`[${i + 1}/${rules.length}] Creating new rule...`);
@@ -281,7 +428,6 @@ async function main() {
                 const newId = (typeof response === 'string') ? response : (response as any)?.id;
                 console.log(`  -> Created with ID: ${newId} (Response type: ${typeof response})`);
 
-                // Update local object to write back later
                 if (newId) {
                     (r as any).id = newId;
                     changesMade = true;
@@ -290,26 +436,21 @@ async function main() {
         } catch (e: any) {
             console.error(`  Error processing rule #${i + 1}: ${e.message}`);
         }
-    }
+    } // End for loop
 
     // 5. Write Back IDs if needed
-    // If we created new rules, they now have IDs. We write these IDs back to the YAML file
-    // so that subsequent runs can identify them as "existing" rules and update them instead of creating duplicates.
-    if (changesMade) {
-        console.log('Writing new IDs back to actual_rules.yaml...');
+    if (changesMade || localRulesUpdated) {
+        console.log('Writing updates back to actual_rules.yaml...');
         const newYaml = yaml.dump({ rules: rules }, { schema: yaml.JSON_SCHEMA, noRefs: true, quotingType: '"' });
-        // Note: yaml.dump might coerce comments or formatting. 
-        // Ideally we'd preserve comments, but standard js-yaml dump doesn't.
-        // The user's goal was "update the yaml with the id", effectively accepting a reformat.
-        fs.writeFileSync(RULES_YAML_PATH, newYaml, 'utf8');
+        fs.writeFileSync(rulesYamlPath, newYaml, 'utf8');
         console.log('File updated.');
     } else {
-        console.log('No new IDs to write back.');
+        console.log('No new IDs or rules to write back.');
     }
 
     console.log('Syncing...');
     await api.sync();
-    await api.shutdown();
+    await shutdownActual();
     console.log('Done.');
 }
 

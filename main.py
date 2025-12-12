@@ -78,7 +78,7 @@ def get_downloaders(banks: List[str]) -> List[BankDownloader]:
 def run_normalization():
     """Run payee normalization on all existing CSV files."""
     print("Running offline payee normalization...")
-    output_dir = settings.output_dir
+    output_dir = settings.transactions_path
     if not output_dir.exists():
         print(f"Output directory {output_dir} does not exist.")
         return
@@ -163,7 +163,7 @@ def main():
         settings.debug = True
 
     print(f"Starting Ledger Fetch...")
-    print(f"Output directory: {settings.output_dir.resolve()}")
+    print(f"Output directory: {settings.transactions_path.resolve()}")
     print(f"Browser profile: {settings.browser_profile_path.resolve()}")
     
     banks_to_run = [args.bank]

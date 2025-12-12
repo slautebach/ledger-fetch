@@ -138,7 +138,7 @@ class BankDownloader(ABC):
         if self.config.debug:
             from datetime import datetime
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            har_dir = self.config.output_dir / "debug_logs"
+            har_dir = self.config.transactions_path / "debug_logs"
             har_dir.mkdir(parents=True, exist_ok=True)
             har_path = har_dir / f"{self.get_bank_name()}_{timestamp}.har"
             print(f"Network traffic will be recorded to: {har_path}")
@@ -212,7 +212,7 @@ class BankDownloader(ABC):
         print(f"DEBUG: Deduplication complete. Removed {duplicate_count} duplicates. Final count: {len(unique_txns)}")
         transactions = list(unique_txns.values())
 
-        writer = CSVWriter(self.config.output_dir / self.get_bank_name())
+        writer = CSVWriter(self.config.transactions_path / self.get_bank_name())
         
         # Convert Transactions to dicts and enforce signs
         txn_dicts = []
@@ -279,7 +279,7 @@ class BankDownloader(ABC):
         Ensure all accounts in transactions exist in accounts.csv.
         Also updates existing accounts if the transaction provides a 'better' (e.g. unmasked) account number.
         """
-        accounts_file = self.config.output_dir / self.get_bank_name() / "accounts.csv"
+        accounts_file = self.config.transactions_path / self.get_bank_name() / "accounts.csv"
         
         known_accounts: Dict[str, Account] = {}
         if accounts_file.exists():
@@ -366,7 +366,7 @@ class BankDownloader(ABC):
     def save_accounts(self, accounts: List[Account]):
         """Save accounts to CSV."""
         from .utils import CSVWriter
-        writer = CSVWriter(self.config.output_dir / self.get_bank_name())
+        writer = CSVWriter(self.config.transactions_path / self.get_bank_name())
         
         # Enforce negative balance for liabilities
         for acc in accounts:
@@ -398,7 +398,7 @@ class BankDownloader(ABC):
             'Payment Due Date'
         ]
         
-        output_file = self.config.output_dir / "creditcard-statements.csv"
+        output_file = self.config.transactions_path / "creditcard-statements.csv"
         
         # 2. Filter loop: Only care about accounts that HAVE statement info or are Credit Cards
         filtered_accounts = []

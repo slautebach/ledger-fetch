@@ -48,7 +48,7 @@ class Config(BaseSettings):
         default=Path.home() / ".ledger_fetch_chrome_profile",
         description="Path to the Chrome user profile directory"
     )
-    output_dir: Path = Field(
+    transactions_path: Path = Field(
         default=Path("./transactions"),
         description="Directory where downloaded transactions will be saved"
     )
@@ -104,7 +104,7 @@ class Config(BaseSettings):
         found_path = None
         for path in search_paths:
             if path and path.exists() and path.is_file():
-                found_path = path
+                found_path = path.resolve()
                 break
         
         if found_path:
@@ -113,8 +113,24 @@ class Config(BaseSettings):
                 with open(found_path, 'r') as f:
                     file_data = yaml.safe_load(f)
                     if file_data:
+                        # Handle relative paths - they should be relative to the config file
+                        if 'transactions_path' in file_data:
+                            path_val = Path(file_data['transactions_path'])
+                            if not path_val.is_absolute():
+                                # Make it absolute relative to the config file location
+                                file_data['transactions_path'] = found_path.parent / path_val
+                        
+                        # Support legacy 'output_dir' alias if present
+                        if 'output_dir' in file_data and 'transactions_path' not in file_data:
+                            print(f"Warning: 'output_dir' is deprecated. Please use 'transactions_path' in {found_path}")
+                            path_val = Path(file_data['output_dir'])
+                            if not path_val.is_absolute():
+                                file_data['transactions_path'] = found_path.parent / path_val
+                            else:
+                                file_data['transactions_path'] = path_val
+
                         config_data = file_data
-                print(f"Loaded configuration from: {found_path.resolve()}")
+                print(f"Loaded configuration from: {found_path}")
             except ImportError:
                 print("Warning: PyYAML not installed. Skipping config file loading.")
             except Exception as e:
