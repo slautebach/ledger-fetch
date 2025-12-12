@@ -61,7 +61,15 @@ class WealthsimpleDownloader(BankDownloader):
         self.ws = None
 
     def _initialize_api(self):
-        """Initialize the Wealthsimple API client."""
+        """
+        Initialize the Wealthsimple API client by extracting session data.
+        
+        This method performs the "session hijacking":
+        1. Extracts the OAuth token (`_oauth2_access_v2`) from browser cookies.
+        2. Extracts the Session ID and Device ID from LocalStorage (managed by the SPA).
+        3. Initializes the `WSAPISession` with these credentials, effectively cloning the
+           active browser session into the Python client.
+        """
         if self.ws:
             return
 
@@ -203,7 +211,13 @@ class WealthsimpleDownloader(BankDownloader):
         return all_transactions
         
     def login(self):
-        """Navigate to login page and wait for manual login."""
+        """
+        Navigate to login page and wait for manual login.
+        
+        Note: Unlike other downloaders, this method does NOT perform the login logic itself.
+        Instead, it waits for the user to log in manually. Once logged in, the `_initialize_api`
+        method will 'hijack' the session by extracting cookies and tokens from the browser state.
+        """
         if not WealthsimpleAPI:
             raise ImportError("ws-api library is required for Wealthsimple downloader.")
 
@@ -300,10 +314,13 @@ class WealthsimpleDownloader(BankDownloader):
         Monkey-patch WealthsimpleAPI to use Playwright's request context.
         
         The `ws-api` library normally uses the synchronous `requests` library. We replace
-        its network method with one that uses `self.context.request`. This has two benefits:
-        1. It uses the exact same networking fingerprint (TLS, headers) as the browser.
-        2. It automatically handles any additional cookies or headers that Playwright 
-           manages.
+        its network method with one that uses `self.context.request` (Playwright).
+        
+        This is critical for two reasons:
+        1.  **Likeness**: It ensures that API requests use the exact same TLS fingerprint, 
+            User-Agent, and headers as the browser, reducing the risk of detection.
+        2.  **Session Continuity**: It automatically handles any rotating cookies or 
+            session-maintenance headers that the browser might be managing in the background.
         """
         
         def playwright_send_http_request(api_self, url, method='POST', data=None, headers=None, return_headers=False):
