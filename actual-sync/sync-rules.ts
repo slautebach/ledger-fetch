@@ -57,6 +57,23 @@ interface YamlFile {
 
 // --- Helper Functions ---
 /**
+ * Resolves the stage string to the API expected value.
+ * 'Pre' -> 'pre'
+ * 'Default' -> null
+ * 'Post' -> 'post'
+ */
+function resolveStage(stage?: string): string | null {
+    if (!stage) return null;
+    const s = stage.toLowerCase();
+    // 'pre' stage in Actual is technically null (or at least it assumes null for pre-processing/default)
+    // We map explicit 'pre' and 'default' to null to ensure compatibility.
+    if (s === 'pre') return 'pre';
+    if (s === 'default') return 'default';
+    if (s === 'post') return 'post';
+    return null;
+}
+
+/**
  * Helper function to compare two rule objects for equality.
  * This is used to determine if an update is necessary.
  *
@@ -276,7 +293,7 @@ async function main() {
             // Convert Server Rule -> YAML Rule
             const newRule: YamlRule = {
                 id: serverRule.id,
-                stage: serverRule.stage || undefined, // 'pre' is null in API, checking if we need to map back
+                stage: serverRule.stage || undefined,
                 op: serverRule.conditionsOp === 'and' ? undefined : serverRule.conditionsOp,
                 conditions: serverRule.conditions.map((c: any) => {
                     let val = c.value;
@@ -357,7 +374,7 @@ async function main() {
         // Actual API expects: { stage, conditionsOp, conditions, actions, id? }
         const rulePayload: any = {
             // Map 'pre' to null as Actual uses null for pre-stage
-            stage: r.stage === 'pre' ? null : (r.stage || null),
+            stage: resolveStage(r.stage),
             conditionsOp: r.op || 'and',
             conditions: r.conditions.map(c => {
                 let val = c.value;
@@ -427,13 +444,13 @@ async function main() {
                         continue;
                     }
 
-                    console.log(`[${i + 1}/${rules.length}] Updating rule ${r.id}...`);
+                    console.log(`[${i + 1}/${rules.length}] Updating rule ${r.id}... (Stage: ${rulePayload.stage})`);
                     rulePayload.id = r.id;
                     await api.updateRule(rulePayload);
                 }
             } else {
                 // CREATE
-                console.log(`[${i + 1}/${rules.length}] Creating new rule...`);
+                console.log(`[${i + 1}/${rules.length}] Creating new rule... (Stage: ${rulePayload.stage})`);
                 const response = await api.createRule(rulePayload);
                 const newId = (typeof response === 'string') ? response : (response as any)?.id;
                 console.log(`  -> Created with ID: ${newId} (Response type: ${typeof response})`);
