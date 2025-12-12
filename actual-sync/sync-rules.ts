@@ -1,12 +1,22 @@
 /**
- * Import Rules Script
+ * Import and Sync Rules Script
  *
- * This script synchronizes rules from a local YAML file (actual_rules.yaml) to Actual Budget.
- * It handles:
- *  - Creating new rules
- *  - Updating existing rules
- *  - Ensuring payees referenced in rules exist
- *  - Writing back generated Rule IDs to the local YAML file for future updates
+ * Purpose:
+ * This script synchronizes rules from a local YAML file (`actual_rules.yaml`) to the Actual Budget.
+ * It ensures that the robust rules defined in your local configuration are correctly applied to the server.
+ *
+ * Core Features:
+ * 1. **Bi-directional Sync**: 
+ *    - Pushes local rules to the server (Creates new rules, Updates existing ones).
+ *    - Pulls new rules from the server and adds them to the local YAML file.
+ * 2. **Idempotency**:
+ *    - Uses Rule IDs to track rules.
+ *    - Writes back generated IDs to the YAML file after creation.
+ * 3. **Dependency Management**:
+ *    - Automatically creates missing Payees referenced in rule actions or conditions.
+ *    - Resolves Account and Category references.
+ * 4. **Diffing**:
+ *    - Compares local rules against server rules to minimize unnecessary API calls.
  */
 import * as api from '@actual-app/api';
 import * as fs from 'fs';

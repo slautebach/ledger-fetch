@@ -1,11 +1,18 @@
 /**
- * Import Categories Script
+ * Sync Budget Categories Script
  *
- * This script is responsible for synchronizing category groups and categories
- * from a local YAML configuration file (budget-categories.yaml) to Actual Budget.
+ * Purpose:
+ * This script serves as the entry point for synchronizing categories. It uses the `CategoryImporter`
+ * class to reconcile changes between the local `budget-categories.yaml` definition and the Actual Budget server.
+ *
+ * Workflow:
+ * 1. Connects to Actual Budget.
+ * 2. Initializes `CategoryImporter` with the path to the YAML configuration.
+ * 3. Pulls any missing categories from the server to update the local YAML (Bidirectional sync).
+ * 4. Pushes local categories to the server (creation).
  *
  * Usage:
- *   npx ts-node import-categories.ts --config <path_to_config>
+ *   npx ts-node sync-budget-categories.ts [--config-dir <path>]
  */
 import * as path from 'path';
 import yargs from 'yargs/yargs';

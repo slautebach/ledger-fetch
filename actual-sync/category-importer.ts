@@ -1,8 +1,18 @@
 /**
- * Category Importer Class
+ * Category Importer
+ * 
+ * This module defines the `CategoryImporter` class, which is responsible for synchronizing
+ * categories from a local YAML definition file into the Actual Budget.
+ * 
+ * Features:
+ * - Reads a YAML file defining Category Groups and Categories.
+ * - Creates Category Groups if they don't exist.
+ * - Creates Categories within those groups if they don't exist.
+ * - Performs case-insensitive matching to avoid duplicates.
+ * - Can optionally check for categories that exist on the server but are missing from the local YAML.
  *
- * This class encapsulates the logic for importing categories from a YAML definition.
- * It handles the hierarchical structure of Category Groups -> Categories.
+ * Usage:
+ * Instantiated and used by `sync-budget-categories.ts`.
  */
 import * as api from '@actual-app/api';
 import * as fs from 'fs';

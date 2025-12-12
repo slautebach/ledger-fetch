@@ -32,7 +32,14 @@ class BMODownloader(BankDownloader):
         return "bmo"
 
     def login(self):
-        """Navigate to login page and wait for manual login."""
+        """
+        Navigate to login page and wait for manual login.
+        
+        This method handles:
+        1. Navigating to the BMO login page.
+        2. Waiting for the user to complete the authentication process.
+        3. Detecting successful login by monitoring URL changes (waiting for redirection to accounts page).
+        """
         print("Navigating to BMO login page...")
         # Forward console logs to Python stdout for debugging
         if self.config.debug:
@@ -199,7 +206,11 @@ class BMODownloader(BankDownloader):
         return all_transactions
 
     def _get_credit_card_accounts(self) -> List[Dict[str, str]]:
-        """Extract credit card account information from the accounts list page.
+        """
+        Extract credit card account information from the accounts list page.
+        
+        Because BMO's page structure is complex and uses shadow DOM/Angular components,
+        we inject JavaScript to traverse the DOM and extract account details directly.
         
         Returns:
             List[Dict]: List of dicts with 'name', 'number', and 'balance' keys.
@@ -321,10 +332,16 @@ class BMODownloader(BankDownloader):
         browser session. This bypasses issues with CORS and missing cookies that would 
         occur if we used `self.page.request.post` from the Python side.
         
+        The payload includes various session attributes and headers (e.g., XSRF-TOKEN)
+        that are required for the server to accept the request.
+        
         Args:
             from_date: Start date in YYYY-MM-DD format
             to_date: End date in YYYY-MM-DD format
             account: The account object
+            
+        Returns:
+            List[Transaction]: List of parsed transactions from this batch.
         """
         
         api_url = "https://www1.bmo.com/api/cdb/utility/cache/transient-extended-credit-card-data/get"

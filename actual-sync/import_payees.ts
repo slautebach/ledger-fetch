@@ -1,10 +1,15 @@
-
 /**
  * Import Payees Script
  *
- * This script imports payees from a CSV file (payee_counts.csv) into Actual Budget.
- * Ideally run before importing transactions or rules to ensure all payees exist.
- * It checks for existing payees by name to avoid duplicates.
+ * Purpose:
+ * This script imports a list of payees from a CSV file (`payee_counts.csv`) into Actual Budget.
+ * It is designed to be run before importing transactions or rules to ensure that all necessary
+ * payees already exist in the system, preventing issues with unlinked transactions.
+ *
+ * Logic:
+ * 1. Checks existing payees in Actual Budget to avoid creation of duplicates.
+ * 2. Reads `payee_counts.csv` to identify potential new payees.
+ * 3. Creates any payees that do not currently exist.
  */
 import * as api from '@actual-app/api';
 import * as fs from 'fs';

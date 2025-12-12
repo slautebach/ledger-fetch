@@ -105,6 +105,7 @@ class Transaction(BaseModel):
 
     @property
     def unique_transaction_id(self) -> str:
+        """Unique identifier for the transaction."""
         return self.get('Unique Transaction ID', '')
 
     @unique_transaction_id.setter
@@ -113,6 +114,7 @@ class Transaction(BaseModel):
 
     @property
     def unique_account_id(self) -> str:
+        """Unique identifier for the associated account."""
         return self.get('Unique Account ID', '')
 
     @unique_account_id.setter
@@ -121,6 +123,7 @@ class Transaction(BaseModel):
 
     @property
     def account_name(self) -> str:
+        """Name of the account."""
         return self.get('Account Name', '')
 
     @account_name.setter
@@ -129,6 +132,7 @@ class Transaction(BaseModel):
 
     @property
     def date(self) -> str:
+        """Transaction date in YYYY-MM-DD format."""
         return self.get('Date', '')
 
     @date.setter
@@ -138,6 +142,7 @@ class Transaction(BaseModel):
 
     @property
     def description(self) -> str:
+        """Raw or cleaned description of the transaction."""
         return self.get('Description', '')
 
     @description.setter
@@ -147,6 +152,7 @@ class Transaction(BaseModel):
 
     @property
     def payee_name(self) -> str:
+        """Normalized payee name."""
         return self.get('Payee Name', '')
 
     @payee_name.setter
@@ -155,6 +161,7 @@ class Transaction(BaseModel):
 
     @property
     def amount(self) -> float:
+        """Transaction amount (negative for outflows/debits, positive for inflows/credits)."""
         return self.get('Amount', 0.0)
 
     @amount.setter
@@ -163,6 +170,7 @@ class Transaction(BaseModel):
 
     @property
     def currency(self) -> str:
+        """Currency code (e.g. CAD, USD)."""
         return self.get('Currency', '')
 
     @currency.setter
@@ -171,6 +179,7 @@ class Transaction(BaseModel):
 
     @property
     def category(self) -> str:
+        """Category assigned by the bank (if available)."""
         return self.get('Category', '')
 
     @category.setter
@@ -179,6 +188,7 @@ class Transaction(BaseModel):
 
     @property
     def is_transfer(self) -> Union[bool, str]:
+        """Flag indicating if this transaction is a transfer."""
         return self.get('Is Transfer', False)
 
     @is_transfer.setter
@@ -187,6 +197,7 @@ class Transaction(BaseModel):
 
     @property
     def notes(self) -> str:
+        """Additional notes or memo."""
         return self.get('Notes', '')
 
     @notes.setter

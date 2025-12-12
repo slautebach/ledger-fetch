@@ -30,7 +30,13 @@ class AmexDownloader(BankDownloader):
         return "amex"
 
     def login(self):
-        """Navigate to login page and wait for manual login."""
+        """
+        Navigate to login page and wait for manual login.
+        
+        This method directs the browser to the 'Recent Activity' page, which redirects to the login
+        screen if the user is not authenticated. It then waits for the URL to change back to a 
+        statement/activity page, indicating successful login.
+        """
         print("Navigating to American Express Statements page (will redirect to login)...")
         # Use the direct link that redirects back to statements after login
         self.page.goto("https://global.americanexpress.com/activity/recent")
@@ -65,6 +71,14 @@ class AmexDownloader(BankDownloader):
     def fetch_accounts(self) -> List[Account]:
         """
         Fetch account details by scraping both Recent Activity (for ID) and Dashboard (for balances).
+        
+        Amex doesn't provide a single clean "API" response for all account details that is easily 
+        accessible without complex session tokens. Thus, we scrape:
+        1.  Account ID (last 5 digits) from the "Recent Activity" page selector.
+        2.  Current Balance and Payment Due info from the "Dashboard" page.
+        
+        Returns:
+            List[Account]: A list containing the single primary active account (multi-card support is limited).
         """
         print("Fetching account details...")
         
@@ -162,6 +176,9 @@ class AmexDownloader(BankDownloader):
         "Recent Activity" view on the website. This provides a more robust data source
         than scraping HTML or downloading CSVs, as it includes unique reference numbers
         and detailed description fields.
+        
+        Returns:
+            List[Transaction]: List of parsed transactions.
         """
         print("Fetching transactions via API...")
         
@@ -195,6 +212,13 @@ class AmexDownloader(BankDownloader):
         Using `self.page.request` is crucial here because it automatically includes
         all the cookies from the browser session (authentication, session ID), which
         are required to authorize the API call.
+        
+        Args:
+            start_date (str): Start date in YYYYMMDD format.
+            end_date (str): End date in YYYYMMDD format.
+            
+        Returns:
+            Dict[str, Any]: The raw JSON response from the API.
         """
         url = (
             f"https://global.americanexpress.com/myca/intl/istatement/canlac/searchTransaction.json"
@@ -230,7 +254,15 @@ class AmexDownloader(BankDownloader):
             raise e
 
     def _parse_amex_json(self, data: Dict[str, Any]) -> List[Transaction]:
-        """Parse the JSON response from searchTransaction.json"""
+        """
+        Parse the JSON response from searchTransaction.json.
+        
+        Args:
+            data (Dict[str, Any]): The raw JSON data from the API.
+            
+        Returns:
+            List[Transaction]: A list of Transaction objects.
+        """
         transactions = []
         
         try:

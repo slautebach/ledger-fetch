@@ -27,7 +27,13 @@ class RBCDownloader(BankDownloader):
         return "rbc"
 
     def login(self):
-        """Navigate to login page and wait for manual login."""
+        """
+        Navigate to login page and wait for manual login.
+        
+        Directs the browser to the main RBC Online Banking entry point.
+        It then polls the URL until it detects a successful login redirection to the 
+        internal dashboard ('index-en').
+        """
         print("Navigating to RBC online banking login page...")
         self.page.goto("https://www.rbcroyalbank.com/ways-to-bank/online-banking.html")
         
@@ -258,7 +264,20 @@ class RBCDownloader(BankDownloader):
             return []
 
     def fetch_transactions_for_account(self, account: Account, days: int = 365) -> Optional[List[Transaction]]:
-        """Fetch transactions for a specific account."""
+        """
+        Fetch transactions for a specific account via internal API.
+        
+        Uses the `transaction-presentation-service` endpoints.
+        - `transactions/pda/account` for Checking/Savings.
+        - `transactions/cc/posted/account` for Credit Cards.
+        
+        Args:
+            account (Account): The account object to fetch for.
+            days (int): Number of days of history to request (for deposit accounts).
+            
+        Returns:
+            Optional[List[Transaction]]: List of transactions if successful, None if failed/skipped.
+        """
         # Use encrypted account number for API calls if available
         encrypted_id = account.get('encryptedAccountNumber')
             
@@ -412,6 +431,9 @@ class RBCDownloader(BankDownloader):
            legacy CSV download.
         4. When processing the CSV, skip transactions for accounts that were already 
            handled by the API to avoid duplicates.
+           
+        Returns:
+            List[Transaction]: Combined list of unique transactions from all sources.
         """
         all_transactions = []
         seen_ids = set()

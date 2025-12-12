@@ -30,7 +30,12 @@ class NationalBankDownloader(BankDownloader):
     def login(self):
         """
         Navigates to the login page and waits for the user to log in.
+        
         Captures the session ID from network requests.
+        
+        This method employs a "network listener" approach. Since BNC uses a single-page application (SPA),
+        standard form submission logic doesn't apply. Instead, we listen for successful GraphQL requests
+        to intercept the session tokens (session_id, xsrf-token, etc.) needed for subsequent API calls.
         """
         self.page.goto("https://app.bnc.ca/")
         
@@ -99,6 +104,12 @@ class NationalBankDownloader(BankDownloader):
     def fetch_accounts(self) -> List[Account]:
         """
         Fetches the list of accounts using the GraphQL API.
+        
+        Executes the `accountsWithProductProfile` (OP3957...) query to retrieve all linked accounts.
+        It parses the complex JSON response to extract account names, numbers, and types.
+        
+        Returns:
+            List[Account]: A list of Account objects found.
         """
         if not self.session_headers:
             logger.error("No session headers available. Cannot fetch accounts.")
@@ -405,6 +416,12 @@ class NationalBankDownloader(BankDownloader):
         1. It ensures the request originates from the correct origin (CORS).
         2. It automatically attaches all cookies.
         3. We can manually mix in our captured `session_headers`.
+        
+        Args:
+            payload (Dict[str, Any]): The GraphQL payload (operationName, variables).
+            
+        Returns:
+            Optional[Dict[str, Any]]: The JSON response if successful, None otherwise.
         """
         url = "https://digitalretail.apis.bnc.ca/sbip/graphql"
         

@@ -1,3 +1,9 @@
+/**
+ * Test Rule API Script
+ * 
+ * Simple utility to verify connectivity to the Actual Budget API and fetch existing rules.
+ * Useful for debugging connection issues or inspecting rule structure without running full sync.
+ */
 import * as api from '@actual-app/api';
 import * as fs from 'fs';
 import * as path from 'path';

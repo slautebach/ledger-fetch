@@ -1,12 +1,21 @@
 /**
  * Import Accounts Script
  *
- * This script scans the transactions directory for `accounts.csv` files and ensures
- * that corresponding accounts exist in Actual Budget. It also maintains an
- * `account-map.json` file to map CSV Account IDs to Actual Budget Account IDs.
+ * Purpose:
+ * This script is responsible for bootstrapping the account setup in Actual Budget by scanning
+ * bank directories for `accounts.csv` files.
+ *
+ * Workflow:
+ * 1. Scans the `transactions` directory for bank subdirectories.
+ * 2. Reads `accounts.csv` from each bank directory.
+ * 3. Checks if the account already exists in Actual Budget:
+ *    - First by checking a persistent `account-map.json` (CSV ID -> Actual ID).
+ *    - Second by checking for a name match.
+ * 4. Creates missing accounts.
+ * 5. Updates `account-map.json` with any new linkages.
  *
  * Usage:
- *   npx ts-node import-accounts.ts [--config <path>] [--dry-run]
+ *   npx ts-node import-accounts.ts [--config-dir <path>] [--transactions-dir <path>]
  */
 import * as api from '@actual-app/api';
 import * as fs from 'fs';

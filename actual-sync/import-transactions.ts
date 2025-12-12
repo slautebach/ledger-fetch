@@ -1,15 +1,27 @@
 /**
- * Actual Budget Sync Tool
+ * Transaction Import and Sync Tool
  *
- * This is the main entry point for the ledger-fetch <-> Actual Budget integration.
- * It is responsible for:
- * 1. Discovering downloaded bank transaction files (CSV).
- * 2. Creating Accounts in Actual Budget if they don't exist (Phase 1).
- * 3. Importing Transactions into those accounts (Phase 2).
- * 4. Reconciling balances by creating manual adjustment transactions if needed (Phase 3).
+ * This script is the core logic for importing downloaded bank transactions into Actual Budget.
+ * It operates in three distinct phases to ensure data integrity and ease of reconciliation.
+ *
+ * Phases:
+ * 1. **Phase 1: Account Creation**
+ *    - Scans for `accounts.csv` files.
+ *    - Creates corresponding accounts in Actual Budget if they don't exist.
+ *    - Maps Bank Account IDs to Actual Budget Account UUIDs.
+ * 
+ * 2. **Phase 2: Transaction Import**
+ *    - Reads CSV transaction files.
+ *    - Normalizes data (dates, amounts, payees).
+ *    - Imports transactions into the mapped accounts.
+ *    - Handles transfers by appending notes.
+ * 
+ * 3. **Phase 3: Initial Reconciliation (Optional)**
+ *    - For *newly created* accounts, compares the bank's "Current Balance" with the calculated Actual balance.
+ *    - Creates a manual balance adjustment transaction if there is a discrepancy to set the initial balance correctly.
  *
  * Usage:
- *   npx ts-node index.ts [--config <path>] [--dry-run] [--bank <bank_name>]
+ *   npx ts-node import-transactions.ts [--config-dir <path>] [--transactions-dir <path>] [--bank <bank_name>]
  */
 import * as api from '@actual-app/api';
 import * as fs from 'fs';
