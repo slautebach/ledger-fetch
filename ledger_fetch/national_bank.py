@@ -394,7 +394,7 @@ class NationalBankDownloader(BankDownloader):
 
         return all_transactions
 
-    return all_transactions
+
 
     def _call_graphql(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """

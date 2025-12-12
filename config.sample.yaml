@@ -1,4 +1,3 @@
-
 # Example configuration for ledger-fetch
 # This file can be placed in the project root or in ~/.ledger_fetch/config.yaml
 
@@ -39,7 +38,10 @@ amex:
 canadiantire:
   enabled: true
   invert_credit_transactions: false
-
+  # Example of account-specific configuration
+  accounts:
+    - id: "CTFS-1234" # The unique account ID found in accounts.csv
+      invert_credit_transactions: true # Override the bank-level setting for this specific account
 
 actual:
   server_url: "url"
