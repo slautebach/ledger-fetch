@@ -263,44 +263,42 @@ async function main() {
 
           const isOffBudget = getBudgetStatus(accountType);
 
-          if (true) {
-            try {
-              const newId = await api.createAccount({
-                name: accountName,
-                offbudget: isOffBudget
-              });
-              actualAccount = { id: newId, name: accountName } as any;
-              accountsCache.push(actualAccount as any);
 
-              // Update Map
-              accountMap[accountId] = newId;
-              saveAccountMap();
+          try {
+            const newId = await api.createAccount({
+              name: accountName,
+              offbudget: isOffBudget
+            });
+            actualAccount = { id: newId, name: accountName } as any;
+            accountsCache.push(actualAccount as any);
 
-            } catch (e: any) {
-              console.error(`    Error creating account: ${e.message}`);
-              continue;
-            }
-            newlyCreatedBankLinkIds.add(accountId);
-            await api.sync();
+            // Update Map
+            accountMap[accountId] = newId;
+            saveAccountMap();
+
+          } catch (e: any) {
+            console.error(`    Error creating account: ${e.message}`);
+            continue;
           }
+          newlyCreatedBankLinkIds.add(accountId);
+          await api.sync();
+
         }
       }
     }
   }
 
-  if (true) {
-    await api.sync();
-    accountsCache = await api.getAccounts();
-  }
+  // Sync before proceeding
+  await api.sync();
+  accountsCache = await api.getAccounts();
 
   // 5. Process Transactions (Phase 2)
   // In this phase, we read the transaction CSV files and import them into
   // the appropriate accounts. We rely on the account mapping established in Phase 1.
   console.log('\n--- Phase 2: Transaction Import ---');
   // Refresh cache one last time to be sure
-  if (true) {
-    accountsCache = await api.getAccounts();
-  }
+  // Refresh cache one last time to be sure
+  accountsCache = await api.getAccounts();
 
   for (const bankDir of bankDirs) {
     const bankName = path.basename(bankDir);
@@ -365,25 +363,24 @@ async function main() {
 
         if (!actualAccount) {
           console.log(`    Account "${nameToUse}" (${accountId}) not found (not in accounts.csv). Creating on the fly...`);
-          if (true) {
-            try {
-              const newId = await api.createAccount({
-                name: nameToUse,
-                offbudget: true
-              });
-              actualAccount = { id: newId, name: nameToUse } as any;
-              accountsCache.push(actualAccount as any);
 
-              // Update Map
-              accountMap[accountId] = newId;
-              saveAccountMap();
+          try {
+            const newId = await api.createAccount({
+              name: nameToUse,
+              offbudget: true
+            });
+            actualAccount = { id: newId, name: nameToUse } as any;
+            accountsCache.push(actualAccount as any);
 
-            } catch (e: any) {
-              console.error(`    Error creating account: ${e.message}`);
-              continue; // Skip transactions if account creation failed
-            }
-            newlyCreatedBankLinkIds.add(accountId);
+            // Update Map
+            accountMap[accountId] = newId;
+            saveAccountMap();
+
+          } catch (e: any) {
+            console.error(`    Error creating account: ${e.message}`);
+            continue; // Skip transactions if account creation failed
           }
+          newlyCreatedBankLinkIds.add(accountId);
         }
 
         if (!actualAccount) continue; // Safety check
@@ -420,19 +417,16 @@ async function main() {
         });
 
         console.log(`    Importing ${actualTransactions.length} transactions for account "${actualAccount.name}"...`);
-        if (true) {
-          try {
-            const result = await api.importTransactions(actualAccount.id, actualTransactions);
-            console.log(`      Added: ${result.added.length}, Updated: ${result.updated.length}, Errors: ${result.errors ? result.errors.length : 0}`);
-          } catch (e: any) {
-            console.error(`      Error importing transactions: ${e.message}`);
-          }
+        console.log(`    Importing ${actualTransactions.length} transactions for account "${actualAccount.name}"...`);
+        try {
+          const result = await api.importTransactions(actualAccount.id, actualTransactions);
+          console.log(`      Added: ${result.added.length}, Updated: ${result.updated.length}, Errors: ${result.errors ? result.errors.length : 0}`);
+        } catch (e: any) {
+          console.error(`      Error importing transactions: ${e.message}`);
         }
       }
-      if (true) {
-        console.log(`    Syncing transactions for ${path.basename(file)}...`);
-        await api.sync();
-      }
+      console.log(`    Syncing transactions for ${path.basename(file)}...`);
+      await api.sync();
     }
   }
 
@@ -440,95 +434,88 @@ async function main() {
   // In this phase, we compare the "Current Balance" from the bank's accounts.csv
   // with the calculated balance in Actual Budget. If there's a mismatch for a NEW account,
   // we create an initial balance adjustment transaction.
-  if (true) {
-    console.log('\n--- Phase 3: Reconciliation ---');
-    // Refresh cache to get latest balances/accounts
-    accountsCache = await api.getAccounts();
+  console.log('\n--- Phase 3: Reconciliation ---');
+  // Refresh cache to get latest balances/accounts
+  accountsCache = await api.getAccounts();
 
-    for (const [uniqueAccountId, info] of accountBalances) {
-      const { balance: expectedBalance, name: accountName } = info;
+  for (const [uniqueAccountId, info] of accountBalances) {
+    const { balance: expectedBalance, name: accountName } = info;
 
-      // Find the account in Actual
-      let actualAccount = null;
-      if (accountMap[uniqueAccountId]) {
-        actualAccount = accountsCache.find((a: any) => a.id === accountMap[uniqueAccountId]);
+    // Find the account in Actual
+    let actualAccount = null;
+    if (accountMap[uniqueAccountId]) {
+      actualAccount = accountsCache.find((a: any) => a.id === accountMap[uniqueAccountId]);
+    }
+    if (!actualAccount) {
+      actualAccount = accountsCache.find((a: any) => a.name === accountName || a.name === uniqueAccountId);
+    }
+
+    if (!actualAccount) {
+      console.log(`    Skipping reconciliation for "${accountName}" (${uniqueAccountId}) - Account not found in Actual.`);
+      continue;
+    }
+
+    try {
+      let currentBalance = 0;
+      if (actualAccount.id === 'dry-run-id') {
+        console.log(`    [Dry Run] Assuming current balance is 0 for new account.`);
+        currentBalance = 0;
+      } else {
+        currentBalance = await api.getAccountBalance(actualAccount.id);
       }
-      if (!actualAccount) {
-        actualAccount = accountsCache.find((a: any) => a.name === accountName || a.name === uniqueAccountId);
-      }
 
-      if (!actualAccount) {
-        console.log(`    Skipping reconciliation for "${accountName}" (${uniqueAccountId}) - Account not found in Actual.`);
-        continue;
-      }
+      if (expectedBalance !== currentBalance) {
+        const diff = expectedBalance - currentBalance;
+        console.log(`    [Balance Mismatch] Account "${actualAccount.name}": Expected ${expectedBalance / 100}, Actual ${currentBalance / 100}, Diff ${diff / 100}`);
 
-      try {
-        let currentBalance = 0;
-        if (actualAccount.id === 'dry-run-id') {
-          console.log(`    [Dry Run] Assuming current balance is 0 for new account.`);
-          currentBalance = 0;
-        } else {
-          currentBalance = await api.getAccountBalance(actualAccount.id);
-        }
+        // CHECK IF THIS IS A NEW ACCOUNT
+        if (newlyCreatedBankLinkIds.has(uniqueAccountId)) {
+          console.log(`    -> Account is NEW. Creating initial reconciliation transaction...`);
 
-        if (expectedBalance !== currentBalance) {
-          const diff = expectedBalance - currentBalance;
-          console.log(`    [Balance Mismatch] Account "${actualAccount.name}": Expected ${expectedBalance / 100}, Actual ${currentBalance / 100}, Diff ${diff / 100}`);
+          const transactionId = crypto.createHash('md5').update(uniqueAccountId + '_initial_reconcile').digest('hex');
 
-          // CHECK IF THIS IS A NEW ACCOUNT
-          if (newlyCreatedBankLinkIds.has(uniqueAccountId)) {
-            console.log(`    -> Account is NEW. Creating initial reconciliation transaction...`);
-
-            const transactionId = crypto.createHash('md5').update(uniqueAccountId + '_initial_reconcile').digest('hex');
-
-            // Calculate date: Day before earliest transaction, or today if no transactions
-            let dateStr = new Date().toISOString().substring(0, 10);
-            const earliestDate = earliestTransactionDates.get(uniqueAccountId);
-            if (earliestDate) {
-              const dateObj = new Date(earliestDate);
-              dateObj.setDate(dateObj.getDate() - 1);
-              dateStr = dateObj.toISOString().substring(0, 10);
-              console.log(`      Earliest transaction: ${earliestDate}. Setting reconciliation date to: ${dateStr}`);
-            } else {
-              console.log(`      No transactions found. Setting reconciliation date to today: ${dateStr}`);
-            }
-
-            const reconciliationTx: ActualTransaction = {
-              date: dateStr,
-              amount: diff, // The difference is what we need to add/subtract
-              payee_name: 'Manual Balance Adjustment',
-              imported_id: transactionId,
-              notes: 'Initial reconciliation balance adjustment',
-              cleared: true,
-              account: actualAccount.id
-            };
-
-            if (true) {
-              try {
-                await api.importTransactions(actualAccount.id, [reconciliationTx]);
-                console.log(`      SUCCESS: Created initial reconciliation transaction for ${diff / 100}`);
-              } catch (e: any) {
-                console.error(`      ERROR: Failed to create reconciliation transaction: ${e.message}`);
-              }
-            }
+          // Calculate date: Day before earliest transaction, or today if no transactions
+          let dateStr = new Date().toISOString().substring(0, 10);
+          const earliestDate = earliestTransactionDates.get(uniqueAccountId);
+          if (earliestDate) {
+            const dateObj = new Date(earliestDate);
+            dateObj.setDate(dateObj.getDate() - 1);
+            dateStr = dateObj.toISOString().substring(0, 10);
+            console.log(`      Earliest transaction: ${earliestDate}. Setting reconciliation date to: ${dateStr}`);
           } else {
-            console.log(`    -> Account is EXISTING. Skipping auto-reconciliation.`);
+            console.log(`      No transactions found. Setting reconciliation date to today: ${dateStr}`);
           }
 
+          const reconciliationTx: ActualTransaction = {
+            date: dateStr,
+            amount: diff, // The difference is what we need to add/subtract
+            payee_name: 'Manual Balance Adjustment',
+            imported_id: transactionId,
+            notes: 'Initial reconciliation balance adjustment',
+            cleared: true,
+            account: actualAccount.id
+          };
+
+          try {
+            await api.importTransactions(actualAccount.id, [reconciliationTx]);
+            console.log(`      SUCCESS: Created initial reconciliation transaction for ${diff / 100}`);
+          } catch (e: any) {
+            console.error(`      ERROR: Failed to create reconciliation transaction: ${e.message}`);
+          }
         } else {
-          console.log(`    Account "${actualAccount.name}" is balanced.`);
+          console.log(`    -> Account is EXISTING. Skipping auto-reconciliation.`);
         }
-      } catch (e: any) {
-        console.error(`    Error reconciling account "${accountName}": ${e.message}`);
+
+      } else {
+        console.log(`    Account "${actualAccount.name}" is balanced.`);
       }
+    } catch (e: any) {
+      console.error(`    Error reconciling account "${accountName}": ${e.message}`);
     }
   }
 
-  // Sync after processing all files
-  if (true) {
-    console.log('Syncing with server...');
-    await api.sync();
-  }
+  console.log('Syncing with server...');
+  await api.sync();
 
   console.log('Sync complete.');
   await shutdownActual();

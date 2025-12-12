@@ -15,6 +15,8 @@ import * as api from '@actual-app/api';
 import * as fs from 'fs';
 import * as path from 'path';
 import csv from 'csv-parser'; // Import default export from csv-parser
+import yargs from 'yargs/yargs';
+import { hideBin } from 'yargs/helpers';
 import { Config, loadConfig, initActual, shutdownActual } from './utils';
 
 // --- Configuration ---
@@ -32,14 +34,16 @@ interface PayeeRow {
 async function main() {
     console.log('--- Starting Payee Import ---');
 
-    // Usage: ts-node import_payees.ts [--config-dir <path>]
-    const args = process.argv.slice(2);
-    let configDir = './config';
-    const configDirIndex = args.indexOf('--config-dir');
-    if (configDirIndex !== -1 && args.length > configDirIndex + 1) {
-        configDir = args[configDirIndex + 1];
-    }
-    const resolvedConfigDir = path.resolve(configDir);
+    // Parse arguments
+    const argv = yargs(hideBin(process.argv))
+        .option('config-dir', {
+            type: 'string',
+            description: 'Path to config directory',
+            default: './config'
+        })
+        .parseSync();
+
+    const resolvedConfigDir = path.resolve(argv['config-dir']);
     const configPath = path.join(resolvedConfigDir, 'config.yaml');
 
     // 1. Load Config

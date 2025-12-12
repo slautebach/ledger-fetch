@@ -2,8 +2,8 @@
  * Sync Budget Categories Script
  *
  * Purpose:
- * This script serves as the entry point for synchronizing categories. It uses the `CategoryImporter`
- * class to reconcile changes between the local `budget-categories.yaml` definition and the Actual Budget server.
+ * This script synchronizes categories between the local `budget-categories.yaml` definition
+ * and the Actual Budget server. It uses the `CategoryImporter` class to reconcile changes.
  *
  * Workflow:
  * 1. Connects to Actual Budget.

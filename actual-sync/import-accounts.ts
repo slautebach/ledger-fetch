@@ -2,11 +2,11 @@
  * Import Accounts Script
  *
  * Purpose:
- * This script is responsible for bootstrapping the account setup in Actual Budget by scanning
- * bank directories for `accounts.csv` files.
+ * This script bootstraps the account setup in Actual Budget by scanning bank directories
+ * for `accounts.csv` files.
  *
  * Workflow:
- * 1. Scans the `transactions` directory for bank subdirectories.
+ * 1. Scans the transactions directory (configured via `config.yaml` or arg) for bank subdirectories.
  * 2. Reads `accounts.csv` from each bank directory.
  * 3. Checks if the account already exists in Actual Budget:
  *    - First by checking a persistent `account-map.json` (CSV ID -> Actual ID).

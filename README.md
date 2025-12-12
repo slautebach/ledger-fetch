@@ -6,12 +6,15 @@ A browser automation suite for personal finance. Uses Python and Playwright to s
 
 The `ledger-fetch` tool currently supports the following financial institutions:
 
-* RBC (Royal Bank of Canada)
-* Wealthsimple
-* Amex (American Express)
-* Canadian Tire Bank - *Credit Cards only*
-* BMO (Bank of Montreal) - *Credit Cards only*
-* CIBC (Canadian Imperial Bank of Commerce) - *Credit Cards only*
+| Bank | Strategy | Notes |
+|------|----------|-------|
+| **RBC** | Internal API | Uses `transaction-presentation-service` endpoints. |
+| **BMO** | Hybrid (API Injection) | Injects JS to fetch data via internal API using browser session. |
+| **Amex** | Internal API | Fetches JSON from `searchTransaction.json`. |
+| **CIBC** | Passive Token Capture | Intercepts `x-auth-token` from background requests. |
+| **National Bank** | GraphQL Interception | Captures session headers to query GraphQL API. |
+| **Wealthsimple** | Session Hijacking | Uses browser cookies to authorize `ws-api` client. |
+| **Canadian Tire** | API w/ Extrapolation | Extrapolates statement dates to fetch history. |
 
 ### 1. Setup
 
@@ -104,13 +107,20 @@ This project includes a TypeScript-based tool to sync your downloaded transactio
 
 ### Configuration
 
-Add the `actual` configuration block to your `config.yaml` file:
+The sync scripts look for configuration files in a `config` directory under the `actual-sync` directory.
+
+You should create a `config` directory containing the necessary configuration files. The main file is `config.yaml`.
+
+**Example `config/config.yaml`:**
 
 ```yaml
-actual:
-  server_url: "http://localhost:5006" # URL of your Actual Budget server
-  password: "your-actual-password"
-  sync_id: "your-sync-id" # The ID of the budget file to sync with
+# Directory where downloaded transactions will be saved.
+# Relative paths are resolved against the config file location.
+transactions_path: "../../transactions"
+
+server_url: "http://localhost:5006" # URL of your Actual Budget server
+password: "your-actual-password"
+sync_id: "your-sync-id" # The ID of the budget file to sync with
 ```
 
 ### Usage
@@ -122,10 +132,13 @@ cd actual-sync
 npm start
 ```
 
-You can also perform a dry run to see what would happen without making changes:
+#### Testing / Custom Configuration
+
+We have removed the `--dry-run` flag. To test against a different budget or configuration (e.g., a test budget), use the `--config-dir` argument to point to a different configuration folder.
 
 ```bash
-npm start -- --dry-run
+# Run with a specific testing configuration directory
+npm start -- --config-dir "./config-test"
 ```
 
 ## Output Structure

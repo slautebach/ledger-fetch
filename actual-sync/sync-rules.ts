@@ -22,14 +22,12 @@ import * as api from '@actual-app/api';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
+import yargs from 'yargs/yargs';
+import { hideBin } from 'yargs/helpers';
 
 // --- Configuration ---
 import { Config, loadConfig, initActual, shutdownActual } from './utils';
 
-// --- Configuration ---
-// CONFIG_PATH removed (using default ./config.yaml via loadConfig or hardcoded)
-
-// Paths are now dynamic based on config-dir argument
 
 // --- Interfaces ---
 interface YamlCondition {
@@ -93,14 +91,16 @@ function rulesEqual(r1: any, r2: any): boolean {
 // --- Main ---
 // --- Main ---
 async function main() {
-    const args = process.argv.slice(2);
-    // Usage: ts-node sync-rules.ts [--config-dir <path>]
-    let configDir = './config';
-    const configDirIndex = args.indexOf('--config-dir');
-    if (configDirIndex !== -1 && args.length > configDirIndex + 1) {
-        configDir = args[configDirIndex + 1];
-    }
-    const resolvedConfigDir = path.resolve(configDir);
+    // Parse arguments
+    const argv = yargs(hideBin(process.argv))
+        .option('config-dir', {
+            type: 'string',
+            description: 'Path to config directory',
+            default: './config'
+        })
+        .parseSync();
+
+    const resolvedConfigDir = path.resolve(argv['config-dir']);
     const rulesYamlPath = path.join(resolvedConfigDir, 'actual_rules.yaml');
     const accountMapPath = path.join(resolvedConfigDir, 'account-map.json');
     const configPath = path.join(resolvedConfigDir, 'config.yaml');
