@@ -32,7 +32,14 @@ class CanadianTireDownloader(BankDownloader):
         return "canadiantire"
 
     def login(self):
-        """Navigate to login page and wait for manual login."""
+        """
+        Navigate to login page and wait for manual login.
+        
+        This handles the initial authentication. Note that CTFS often requires
+        SMS or Email 2FA for new browser sessions. The script waits indefinitely
+        (up to 5 minutes) for the user to complete this challenge and arrive at 
+        the account details page.
+        """
         print("Navigating to Canadian Tire Financial Services login page...")
         self.page.goto("https://www.ctfs.com/content/dash/en/private/Details.html#!/view?tab=account-details")
         
@@ -62,7 +69,18 @@ class CanadianTireDownloader(BankDownloader):
             print(f"Warning: Could not auto-navigate (might be already there): {e}")
 
     def fetch_accounts(self) -> List[Account]:
-        """Fetch accounts from profile and account API."""
+        """
+        Fetch accounts from profile and account API.
+        
+        CTFS splits account data across two endpoints:
+        1. `retrieveProfile`: Returns the list of cards, partial account numbers, and status.
+           We use this to discover what accounts exist.
+        2. `retrieveAccount`: Returns detailed balances, due dates, and statement dates.
+           We call this for each account found in step 1.
+           
+        Returns:
+            List[Account]: List of fully populated Account objects.
+        """
         print("Fetching profile to get accounts...")
         profile_url = "https://www.ctfs.com/bank/v1/profile/retrieveProfile"
         accounts = []
@@ -203,7 +221,20 @@ class CanadianTireDownloader(BankDownloader):
         return {}
 
     def download_transactions(self) -> List[Transaction]:
-        """Fetch transactions via API."""
+        """
+        Fetch transactions via API.
+        
+        CTFS requires a `statementDate` to fetch transactions. It does not support arbitrary date ranges.
+        
+        Strategy:
+        1. Discover available statement dates from the UI (drop-down) or API.
+        2. If that fails or isn't enough, EXTRAPOLATE past dates. Since statements are monthly,
+           we can mathematically calculate likely statement dates based on the 'lastStatementDate'.
+        3. Iterate through these dates and call `retrieveTransactions` for each.
+        
+        Returns:
+             List[Transaction]: Aggregated list of transactions from all fetched statements.
+        """
         
         # 1. Fetch Accounts
         # 1. Fetch Accounts
@@ -434,6 +465,9 @@ class CanadianTireDownloader(BankDownloader):
         Args:
             start_date_str: The most recent known statement date (YYYY-MM-DD).
             days_back: How far back in time to generate dates for.
+            
+        Returns:
+            List[str]: List of date strings (YYYY-MM-DD).
         """
         try:
             start_date = datetime.strptime(start_date_str, "%Y-%m-%d")

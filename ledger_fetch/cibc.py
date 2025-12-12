@@ -34,7 +34,8 @@ class CIBCDownloader(BankDownloader):
         Navigate to the login page and wait for the user to log in.
         
         The script waits for the dashboard element (.card-container) to appear
-        before proceeding.
+        before proceeding. This ensures that the user has successfully authenticated 
+        and the Single Page App (SPA) has loaded.
         """
         print("Navigating to CIBC login page...")
         # User requested specific login URL
@@ -65,12 +66,15 @@ class CIBCDownloader(BankDownloader):
         """
         Orchestrate the transaction download process.
         
-        1.  Captures session tokens (x-auth-token) from background API requests.
-        2.  Scrapes the dashboard for available accounts (IDs and Names).
-        3.  Iterates through each account.
-        4.  For each account, iterates through the past 12 months.
-        5.  Fetches transactions for each month using the internal JSON API.
-        6.  Normalizes and returns the aggregated list of transactions.
+        This method is the core of the CIBC downloader. It employs a "passive capture" 
+        strategy:
+        1.  It sets up a listener on background network requests (`page.on("request")`).
+        2.  It waits for the banking app to make a request to its own API (`api/v1/json`).
+        3.  It intercepts and extracts the `x-auth-token` header from that request.
+        4.  It then uses this stolen token to make its own API calls to fetch transaction history.
+        
+        Returns:
+            List[Transaction]: All transactions fetched for all accounts.
         """
         # 1. Capture tokens from any API request on the dashboard
         print("Capturing session tokens...")
