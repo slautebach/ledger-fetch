@@ -5,6 +5,15 @@ from playwright.sync_api import Playwright, BrowserContext, Page, sync_playwrigh
 from .config import Config, settings
 from .models import Transaction, Account
 
+"""
+Base Bank Downloader Module
+
+This module defines the abstract base class `BankDownloader` which provides the 
+common scaffolding for all bank-specific implementations. It standardizes the 
+workflow of connecting to a bank, downloading transactions, and saving them 
+locally, using Playwright for browser automation.
+"""
+
 class BankDownloader(ABC):
     """
     Abstract base class for bank transaction downloaders.
@@ -12,6 +21,13 @@ class BankDownloader(ABC):
     This class defines the interface that all bank-specific downloaders must implement.
     It handles the common Playwright setup and teardown, as well as the high-level
     execution flow (login -> navigate -> download -> save).
+    
+    Attributes:
+        config (Config): The configuration object containing settings (paths, timeouts, etc.).
+        context (BrowserContext): The active Playwright browser context.
+        page (Page): The current Playwright page object.
+        playwright (Playwright): The Playwright engine instance.
+        accounts_cache (Dict[str, Account]): Cache of accounts fetched during the session, keyed by ID.
     """
     
     def __init__(self, config: Config = settings):
@@ -101,6 +117,9 @@ class BankDownloader(ABC):
         Launches a persistent Chrome context using the configured profile path.
         This allows the browser to retain cookies and session data between runs,
         which is crucial for maintaining login sessions and avoiding 2FA prompts.
+        
+        The persistent context means we are essentially opening a standard Chrome 
+        user profile programmatically.
         """
         print(f"Launching browser with profile: {self.config.browser_profile_path}")
         
@@ -176,7 +195,7 @@ class BankDownloader(ABC):
         from .utils import CSVWriter
         
         # Deduplicate based on unique_transaction_id to handle overlapping downloads
-        # (e.g. "Recent Activity" vs "Monthly Statement")
+        # (e.g. "Recent Activity" vs "Monthly Statement" often contain the same transactions)
         unique_txns = {}
         print(f"DEBUG: Starting deduplication on {len(transactions)} transactions...")
         duplicate_count = 0
@@ -226,6 +245,7 @@ class BankDownloader(ABC):
                             # If it's a liability account, we invert the sign relative to "Debit is Positive" convention
                             # So a $50 purchase (Debit) becomes -50.
                             # A -$50 payment (Credit) becomes +50.
+                            # This standardizes the output for ledgers that expect negative values for outflows.
                             t.amount = -amount
                         except (ValueError, TypeError):
                             pass

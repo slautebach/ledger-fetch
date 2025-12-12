@@ -1,3 +1,16 @@
+/**
+ * Actual Budget Sync Tool
+ *
+ * This is the main entry point for the ledger-fetch <-> Actual Budget integration.
+ * It is responsible for:
+ * 1. Discovering downloaded bank transaction files (CSV).
+ * 2. Creating Accounts in Actual Budget if they don't exist (Phase 1).
+ * 3. Importing Transactions into those accounts (Phase 2).
+ * 4. Reconciling balances by creating manual adjustment transactions if needed (Phase 3).
+ *
+ * Usage:
+ *   npx ts-node index.ts [--config <path>] [--dry-run] [--bank <bank_name>]
+ */
 import * as api from '@actual-app/api';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -58,6 +71,28 @@ interface ActualTransaction {
   transfer_id?: string;
 }
 
+// Map CSV Account ID -> Actual Account UUID
+let accountMap: Record<string, string> = {};
+const ACCOUNT_MAP_FILE = path.join(__dirname, 'account-map.json');
+
+function loadAccountMap() {
+  if (fs.existsSync(ACCOUNT_MAP_FILE)) {
+    try {
+      accountMap = JSON.parse(fs.readFileSync(ACCOUNT_MAP_FILE, 'utf8'));
+    } catch (e) {
+      console.error('Error loading account map:', e);
+    }
+  }
+}
+
+function saveAccountMap() {
+  try {
+    fs.writeFileSync(ACCOUNT_MAP_FILE, JSON.stringify(accountMap, null, 2), 'utf8');
+  } catch (e) {
+    console.error('Error saving account map:', e);
+  }
+}
+
 // Parse arguments
 const argv = yargs(hideBin(process.argv))
   .option('config', {
@@ -86,6 +121,7 @@ const argv = yargs(hideBin(process.argv))
 
 async function main() {
   console.log('Starting Actual Budget Sync...');
+  loadAccountMap();
 
   // 1. Load Config
   let config: Config;
@@ -167,6 +203,8 @@ async function main() {
   console.log(`Found ${bankDirs.length} bank directories.`);
 
   // 4. Process Accounts (Phase 1)
+  // In this phase, we read the 'accounts.csv' for each bank and ensure
+  // that a corresponding account exists in Actual Budget.
   console.log('\n--- Phase 1: Account Creation ---');
   let accountsCache = await api.getAccounts();
   const accountBalances = new Map<string, { balance: number, name: string }>(); // Map Unique Account ID to { balance, name }
@@ -207,7 +245,27 @@ async function main() {
 
         if (!accountId) continue;
 
-        let actualAccount = accountsCache.find((a: any) => a.name === accountName || a.name === accountId);
+        // Optimized Lookup: 1. Map, 2. Name
+        let actualAccount = null;
+
+        // 1. Check Map
+        if (accountMap[accountId]) {
+          actualAccount = accountsCache.find((a: any) => a.id === accountMap[accountId]);
+        }
+
+        // 2. Check Name (Fallback)
+        if (!actualAccount) {
+          actualAccount = accountsCache.find((a: any) => a.name === accountName || a.name === accountId);
+        }
+
+        // Update Map if found
+        if (actualAccount) {
+          if (accountMap[accountId] !== actualAccount.id) {
+            console.log(`    Mapping Bank ID "${accountId}" to Actual Account "${actualAccount.name}" (${actualAccount.id})`);
+            accountMap[accountId] = actualAccount.id;
+            saveAccountMap();
+          }
+        }
 
         if (!actualAccount) {
           console.log(`    Account "${accountName}" (${accountId}) not found. Creating...`);
@@ -233,16 +291,22 @@ async function main() {
                 name: accountName,
                 offbudget: isOffBudget
               });
-              actualAccount = { id: newId, name: accountName };
-              accountsCache.push(actualAccount);
+              actualAccount = { id: newId, name: accountName } as any;
+              accountsCache.push(actualAccount as any);
+
+              // Update Map
+              accountMap[accountId] = newId;
+              saveAccountMap();
+
             } catch (e: any) {
               console.error(`    Error creating account: ${e.message}`);
+              continue;
             }
             newlyCreatedBankLinkIds.add(accountId);
           } else {
             console.log(`    [Dry Run] Would create account "${accountName}" (Type: ${accountType}, OffBudget: ${isOffBudget})`);
-            actualAccount = { id: 'dry-run-id', name: accountName };
-            accountsCache.push(actualAccount);
+            actualAccount = { id: 'dry-run-id', name: accountName } as any;
+            accountsCache.push(actualAccount as any);
             newlyCreatedBankLinkIds.add(accountId);
           }
           if (!argv['dry-run']) {
@@ -259,6 +323,8 @@ async function main() {
   }
 
   // 5. Process Transactions (Phase 2)
+  // In this phase, we read the transaction CSV files and import them into
+  // the appropriate accounts. We rely on the account mapping established in Phase 1.
   console.log('\n--- Phase 2: Transaction Import ---');
   // Refresh cache one last time to be sure
   if (!argv['dry-run']) {
@@ -310,7 +376,21 @@ async function main() {
         const nameToUse = knownName || txAccountName || accountId;
 
         // Find the account in Actual
-        let actualAccount = accountsCache.find((a: any) => a.name === nameToUse || a.name === accountId);
+        let actualAccount = null;
+        if (accountMap[accountId]) {
+          actualAccount = accountsCache.find((a: any) => a.id === accountMap[accountId]);
+        }
+        if (!actualAccount) {
+          actualAccount = accountsCache.find((a: any) => a.name === nameToUse || a.name === accountId);
+        }
+
+        if (actualAccount) {
+          if (accountMap[accountId] !== actualAccount.id) {
+            console.log(`    Mapping Bank ID "${accountId}" to Actual Account "${actualAccount.name}" (${actualAccount.id})`);
+            accountMap[accountId] = actualAccount.id;
+            saveAccountMap();
+          }
+        }
 
         if (!actualAccount) {
           console.log(`    Account "${nameToUse}" (${accountId}) not found (not in accounts.csv). Creating on the fly...`);
@@ -320,8 +400,13 @@ async function main() {
                 name: nameToUse,
                 offbudget: true
               });
-              actualAccount = { id: newId, name: nameToUse };
-              accountsCache.push(actualAccount);
+              actualAccount = { id: newId, name: nameToUse } as any;
+              accountsCache.push(actualAccount as any);
+
+              // Update Map
+              accountMap[accountId] = newId;
+              saveAccountMap();
+
             } catch (e: any) {
               console.error(`    Error creating account: ${e.message}`);
               continue; // Skip transactions if account creation failed
@@ -329,11 +414,13 @@ async function main() {
             newlyCreatedBankLinkIds.add(accountId);
           } else {
             console.log(`    [Dry Run] Would create account "${nameToUse}"`);
-            actualAccount = { id: 'dry-run-id', name: nameToUse };
-            accountsCache.push(actualAccount);
+            actualAccount = { id: 'dry-run-id', name: nameToUse } as any;
+            accountsCache.push(actualAccount as any);
             newlyCreatedBankLinkIds.add(accountId);
           }
         }
+
+        if (!actualAccount) continue; // Safety check
 
         // Prepare Transactions
         const actualTransactions: ActualTransaction[] = txs.map(tx => {
@@ -386,6 +473,9 @@ async function main() {
   }
 
   // 6. Phase 3: Reconciliation (Global)
+  // In this phase, we compare the "Current Balance" from the bank's accounts.csv
+  // with the calculated balance in Actual Budget. If there's a mismatch for a NEW account,
+  // we create an initial balance adjustment transaction.
   if (!argv['dry-run']) {
     console.log('\n--- Phase 3: Reconciliation ---');
     // Refresh cache to get latest balances/accounts
@@ -395,7 +485,13 @@ async function main() {
       const { balance: expectedBalance, name: accountName } = info;
 
       // Find the account in Actual
-      const actualAccount = accountsCache.find((a: any) => a.name === accountName || a.name === uniqueAccountId);
+      let actualAccount = null;
+      if (accountMap[uniqueAccountId]) {
+        actualAccount = accountsCache.find((a: any) => a.id === accountMap[uniqueAccountId]);
+      }
+      if (!actualAccount) {
+        actualAccount = accountsCache.find((a: any) => a.name === accountName || a.name === uniqueAccountId);
+      }
 
       if (!actualAccount) {
         console.log(`    Skipping reconciliation for "${accountName}" (${uniqueAccountId}) - Account not found in Actual.`);

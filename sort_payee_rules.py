@@ -1,5 +1,19 @@
+"""
+Payee Rules Sorter
+
+This utility script sorts and formats the YAML files used for payee normalization (rules).
+It enforces a consistent structure to make the rules files easier to maintain manually.
+
+Features:
+1. Sorts rules alphabetically by name.
+2. Sorts keywords and regex patterns within each rule.
+3. Fixes common copy-paste errors (duplicate keys).
+4. Enforces 'quoted string' style for scalars using a custom YAML presenter.
+"""
+
 import yaml
 from pathlib import Path
+from typing import Any
 import re
 from ledger_fetch.config import settings
 

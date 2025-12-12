@@ -2,6 +2,20 @@ from typing import Dict, Any, Union, List
 from abc import ABC, abstractmethod
 from enum import Enum
 
+"""
+Data Models for Ledger Fetch
+
+This module defines the core data structures used throughout the application to 
+represent financial entities. It uses Pydantic-like structures (though implemented 
+manually here for simplicity/flexibility) to handle data ingestion and CSV serialization.
+
+Key Classes:
+- AccountType: Enum for account classifications.
+- BaseModel: Abstract base class providing common dictionary-base storage and CSV export methods.
+- Transaction: Represents a single financial transaction.
+- Account: Represents a bank account or credit card.
+"""
+
 class AccountType(str, Enum):
     CHEQUING = "Chequing"
     SAVINGS = "Savings"
@@ -13,6 +27,12 @@ class AccountType(str, Enum):
     OTHER = "Other"
 
 class BaseModel(ABC):
+    """
+    Abstract base model that wraps a raw data dictionary.
+    
+    Provides utility methods to get/set values and flatten nested dictionaries 
+    for flat CSV export.
+    """
     def __init__(self, raw_data: Dict[str, Any]):
         self.raw_data = raw_data
 
@@ -57,6 +77,13 @@ class BaseModel(ABC):
         return row
 
 class Transaction(BaseModel):
+    """
+    Represents a single financial transaction.
+    
+    This class normalizes transaction data from various bank formats into a consistent structure.
+    It provides properties for accessing standard fields like date, amount, description, etc., 
+    while preserving the original 'raw_data' from the bank for debugging or extended detail.
+    """
     CSV_FIELDS = [
         'Unique Transaction ID',
         'Unique Account ID',

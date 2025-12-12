@@ -13,13 +13,19 @@ class BMODownloader(BankDownloader):
     BMO (Bank of Montreal) Transaction Downloader.
     
     This downloader automates the retrieval of transaction data from BMO's online banking.
-    It uses a hybrid approach:
-    1.  Interactive Login: The user logs in manually.
-    2.  API Interception: The script executes JavaScript within the browser context to 
-        call BMO's internal REST API (`/api/cdb/utility/cache/transient-extended-credit-card-data/get`).
+    It uses a advanced hybrid approach because BMO's standard CSV export is often limited.
     
-    This allows for fetching detailed transaction data, including pending transactions
-    and extended metadata, which might not be available in standard CSV exports.
+    Workflow:
+    1.  Interactive Login: Use Playwright to let the user log in.
+    2.  Page Scraping: Parse the DOM of the accounts list to discover credit card accounts 
+        and their current balances.
+    3.  API Interception: Unlike RBC (which uses direct HTTP requests), BMO requires complex 
+        headers (XSRF tokens, session IDs). We solve this by executing `fetch` *inside* 
+        the browser context via `page.evaluate()`. This ensures all cookies and session 
+        headers are automatically attached by the browser.
+    
+    This allows us to fetch detailed transaction data (including pending transactions)
+    from the internal `/api/cdb/utility/cache/transient-extended-credit-card-data/get` endpoint.
     """
 
     def get_bank_name(self) -> str:
@@ -196,8 +202,11 @@ class BMODownloader(BankDownloader):
         """Extract credit card account information from the accounts list page.
         
         Returns:
-            List of dicts with 'name' and 'number' keys
+            List[Dict]: List of dicts with 'name', 'number', and 'balance' keys.
         """
+        # We rely on executing JavaScript in the browser to robustly traverse the DOM,
+        # as the page structure is complex and dynamic (Angular/React).
+        # Reuse the scraping logic
         # Retry up to 5 times (15 seconds total)
         for attempt in range(5):
             try:
@@ -304,7 +313,13 @@ class BMODownloader(BankDownloader):
             print(f"Error clicking account: {e}")
 
     def _fetch_transactions_from_api(self, from_date: str, to_date: str, account: Account) -> List[Transaction]:
-        """Fetch transactions from BMO REST API.
+        """
+        Fetch transactions from BMO REST API by injecting JS.
+        
+        This method constructs the complex payload required by BMO's backend and then
+        uses `page.evaluate()` to perform the `fetch` call from within the authorized 
+        browser session. This bypasses issues with CORS and missing cookies that would 
+        occur if we used `self.page.request.post` from the Python side.
         
         Args:
             from_date: Start date in YYYY-MM-DD format

@@ -1,3 +1,14 @@
+"""
+Configuration Management Module
+
+This module defines the configuration schema for the Ledger Fetch application
+using Pydantic. It handles:
+1.  Loading configuration from YAML files (e.g., `config.yaml`).
+2.  Overriding settings via environment variables (prefixed with `LEDGER_FETCH_`).
+3.  Defining default values for all settings.
+4.  Providing typed configuration objects for the rest of the application.
+"""
+
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 from pydantic import Field, BaseModel

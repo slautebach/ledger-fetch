@@ -38,16 +38,19 @@ class WealthsimpleDownloader(BankDownloader):
     """
     Wealthsimple Transaction Downloader.
     
-    This downloader leverages the `ws-api` library (if available) and the browser's
-    authenticated session to fetch transactions directly from Wealthsimple's API.
+    This downloader is unique in that it leverages an existing third-party library (`ws-api`)
+    instead of implementing the API calls from scratch. However, instead of asking for 
+    user credentials (username/password/2FA), it "hijacks" the session from the 
+    Playwright browser.
     
     Workflow:
-    1.  Interactive Login: The user logs in manually.
-    2.  Session Hijacking: The script extracts the OAuth token, session ID, and 
-        device ID from the browser's cookies and local storage.
-    3.  API Initialization: It initializes a `WealthsimpleAPI` client using these credentials.
-    4.  Data Fetching: It iterates through all accounts and fetches activities (transactions)
-        using the API.
+    1.  Interactive Login: User logs in manually via Playwright.
+    2.  Session Hijacking: The script extracts the OAuth access token (`_oauth2_access_v2`)
+        from cookies and session/device IDs from LocalStorage.
+    3.  Library Adaptation: It initializes the `WealthsimpleAPI` client with these tokens.
+    4.  Monkey Patching: It patches the `send_http_request` method of the library to use 
+        Playwright's `request` context. This ensures that the library's API calls pass 
+        through the browser's networking stack, maintaining fingerprint consistency.
     """
 
     def get_bank_name(self) -> str:
@@ -293,7 +296,15 @@ class WealthsimpleDownloader(BankDownloader):
         return txn
 
     def _setup_monkey_patch(self):
-        """Monkey-patch WealthsimpleAPI to use Playwright."""
+        """
+        Monkey-patch WealthsimpleAPI to use Playwright's request context.
+        
+        The `ws-api` library normally uses the synchronous `requests` library. We replace
+        its network method with one that uses `self.context.request`. This has two benefits:
+        1. It uses the exact same networking fingerprint (TLS, headers) as the browser.
+        2. It automatically handles any additional cookies or headers that Playwright 
+           manages.
+        """
         
         def playwright_send_http_request(api_self, url, method='POST', data=None, headers=None, return_headers=False):
             headers = headers or {}

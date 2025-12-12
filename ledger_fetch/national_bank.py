@@ -10,6 +10,20 @@ from .utils import TransactionNormalizer
 logger = logging.getLogger(__name__)
 
 class NationalBankDownloader(BankDownloader):
+    """
+    National Bank of Canada (BNC) Transaction Downloader.
+    
+    This downloader targets the new BNC digital banking platform, which uses a GraphQL API.
+    
+    Workflow:
+    1.  Interactive Login: User logs in manually.
+    2.  Session Capture: The script listens for any GraphQL requests (`sbip/graphql`) 
+        to capture the `session_id` and other authorization headers.
+    3.  Storage Fallback: If network capture fails, it attempts to read the session ID 
+        from `sessionStorage` or `localStorage`.
+    4.  GraphQL Querying: Uses the captured session to execute specific GraphQL operations 
+        (Accounts List, Transaction History) directly against the endpoint.
+    """
     def get_bank_name(self) -> str:
         return "national_bank"
 
@@ -380,9 +394,17 @@ class NationalBankDownloader(BankDownloader):
 
         return all_transactions
 
+    return all_transactions
+
     def _call_graphql(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Helper to make GraphQL requests using the browser page context.
+        Execute a GraphQL query/mutation using the browser's fetch API.
+        
+        We inject a `fetch` call into the browser page using `page.evaluate`. 
+        This is critical because:
+        1. It ensures the request originates from the correct origin (CORS).
+        2. It automatically attaches all cookies.
+        3. We can manually mix in our captured `session_headers`.
         """
         url = "https://digitalretail.apis.bnc.ca/sbip/graphql"
         

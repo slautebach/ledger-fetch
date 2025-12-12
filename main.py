@@ -3,6 +3,31 @@ import sys
 import pandas as pd
 from typing import List
 from pathlib import Path
+
+"""
+Ledger Fetch - Main Entry Point
+
+This script serves as the command-line interface (CLI) for the Ledger Fetch application.
+It orchestrates the process of downloading financial transactions from various banks 
+and saving them to local CSV files.
+
+Purpose:
+- Parse command-line arguments to determine which banks to process.
+- Initialize and execute the appropriate BankDownloader instances.
+- Handle browser automation setup using Playwright.
+- Provide utility execution, such as offline payee normalization.
+
+Usage:
+    python main.py --bank <bank_name>    # Download from a specific bank
+    python main.py --all                 # Download from all configured banks
+    python main.py --normalize           # Run offline payee normalization
+    python main.py --headless            # Run in headless mode (no visible browser)
+
+Dependencies:
+- playwright: For browser automation.
+- pandas: For CSV handling and data manipulation.
+- ledger_fetch.*: Internal modules for bank logic.
+"""
 from ledger_fetch.config import settings
 from ledger_fetch.base import BankDownloader
 from ledger_fetch.utils import TransactionNormalizer
@@ -25,14 +50,25 @@ BANKS = {
 }
 
 def get_downloaders(banks: List[str]) -> List[BankDownloader]:
-    """Return list of downloader instances based on requested banks."""
+    """
+    Return a list of initialized downloader instances based on requested bank names.
+    
+    Args:
+        banks: A list of bank key strings (e.g., ['rbc', 'bmo']). 
+               If 'all' is present in the list, returns downloaders for all registered banks.
+               
+    Returns:
+        List[BankDownloader]: A list of instantiated downloader objects ready to run.
+    """
     downloaders = []
     
     requested = set(banks)
+    # If the user requested 'all' banks, iterate through the entire registry
     if 'all' in requested:
         # Return all instantiated downloaders
         return [cls() for cls in BANKS.values()]
     
+    # Otherwise, only instantiate the specifically requested banks
     for bank_name, cls in BANKS.items():
         if bank_name in requested:
             downloaders.append(cls())
@@ -47,16 +83,17 @@ def run_normalization():
         print(f"Output directory {output_dir} does not exist.")
         return
 
-    # Walk through all files in output_dir
+    # Walk through all files in output_dir recursively
     count = 0
     for file_path in output_dir.rglob("*.csv"):
-        # Skip accounts.csv and non-transaction files if possible
+        # We only want to normalize transaction files. 
+        # Skip 'accounts.csv' and other non-transactional system files.
         if file_path.name.lower() == "accounts.csv":
             continue
             
         print(f"Processing {file_path.parent.name}/{file_path.name}...")
         try:
-            # Read CSV
+            # Read CSV into a pandas DataFrame
             df = pd.read_csv(file_path)
             
             # Check if Description column exists

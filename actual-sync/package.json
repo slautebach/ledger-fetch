@@ -2,9 +2,13 @@
   "name": "actual-sync",
   "version": "1.0.0",
   "description": "Syncs transactions from ledger-fetch CSVs to Actual Budget",
-  "main": "index.js",
+  "main": "sync-transactions.js",
   "scripts": {
-    "import": "ts-node index.ts",
+    "import-transactions": "ts-node import-transactions.ts",
+    "sync-budget-categories": "ts-node --transpile-only sync-budget-categories.ts",
+    "sync-rules": "ts-node sync-rules.ts",
+    "import-accounts": "ts-node import-accounts.ts",
+    "import-payees": "ts-node import_payees.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {

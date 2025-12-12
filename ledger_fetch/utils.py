@@ -1,3 +1,12 @@
+"""
+Utility Functions and Classes
+
+This module provides common utilities used across the application, including:
+1.  Transaction Normalization: Cleaning descriptions, parsing dates, and generating IDs.
+2.  Payee Normalization: Standardizing payee names based on configurable rules.
+3.  CSV Writing: Handling the robust export of transaction data to CSV files.
+"""
+
 import csv
 import re
 import hashlib

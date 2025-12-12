@@ -1,3 +1,16 @@
+"""
+Payee Processing Utility
+
+This script analyzes transaction data to generate reports on payee mappings.
+It acts as a helper to identify which original descriptions map to which normalized payees.
+
+Workflow:
+1. Runs the main normalization routine to ensure data is up-to-date.
+2. Scans all transaction CSVs.
+3. Generates `payee_counts.csv` (frequency of each normalized payee).
+4. Generates `payee_mappings.csv` (mapping from Original Description -> Normalized Payee).
+"""
+
 import pandas as pd
 from pathlib import Path
 from collections import Counter

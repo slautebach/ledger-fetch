@@ -106,3 +106,7 @@ rules:
 - name: "Wendy's"
   regex:
   - "(?i)Wendy'?s.*"
+- name: "Uber Eats"
+  keywords:
+  - "UBER EATS"
+  - "UBEREATS"

@@ -1,3 +1,11 @@
+"""
+Payee Frequency Counter
+
+A simple utility to count and list the most frequent payees found across all 
+transaction files. Useful for identifying high-volume payees that might need
+specific normalization rules.
+"""
+
 import pandas as pd
 from pathlib import Path
 from collections import Counter

@@ -14,12 +14,18 @@ class CanadianTireDownloader(BankDownloader):
     Canadian Tire Financial Services (CTFS) Transaction Downloader.
     
     This downloader handles the retrieval of transactions from the CTFS website.
-    It employs a sophisticated API interaction strategy:
+    It employs a sophisticated API interaction strategy because CTFS does not have a 
+    simple date-range transaction API. Instead, it is statement-based.
+    
+    Workflow:
     1.  Interactive Login: The user logs in manually.
-    2.  Token Extraction: It extracts the `transientReference` and `csrftoken` from 
-        the browser's state (cookies and profile API).
-    3.  API Calls: It uses these tokens to query the internal API (`/dash/v1/account/retrieveTransactions`)
-        for each available statement date.
+    2.  Token Extraction: It extracts the `transientReference` (a temporary account handle) 
+        and `csrftoken` from `document.cookie` and API responses.
+    3.  Statement Extrapolation: Since the API requires exact statement dates, and scraping 
+        them is unreliable, the script finds the latest statement date and then mathematically 
+        extrapolates previous statement dates (monthly) to cover the requested date range.
+    4.  Statement Fetching: It iterates through these calculated dates and calls 
+        `/dash/v1/account/retrieveTransactions` for each one.
     """
 
     def get_bank_name(self) -> str:
@@ -418,7 +424,17 @@ class CanadianTireDownloader(BankDownloader):
         return transactions
 
     def _generate_historical_dates(self, start_date_str: str, days_back: int) -> List[str]:
-        """Generate a list of monthly dates going back in time."""
+        """
+        Generate a list of monthly dates going back in time from a start date.
+        
+        This is a workaround for the API structure. If we know one valid statement date 
+        (e.g., the latest one), we can guess previous ones because they are usually 
+        on the same day of the month.
+        
+        Args:
+            start_date_str: The most recent known statement date (YYYY-MM-DD).
+            days_back: How far back in time to generate dates for.
+        """
         try:
             start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
         except ValueError:
@@ -440,7 +456,7 @@ class CanadianTireDownloader(BankDownloader):
                 month = 12
                 year -= 1
             
-            # Clamp day to valid range for the new month
+            # Clamp day to valid range for the new month (e.g., handle Feb 28/29)
             last_day_of_month = calendar.monthrange(year, month)[1]
             safe_day = min(billing_day, last_day_of_month)
             

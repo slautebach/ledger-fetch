@@ -13,15 +13,15 @@ class AmexDownloader(BankDownloader):
     """
     American Express Transaction Downloader.
     
-    This downloader automates the process of downloading CSV statements from the
-    American Express website.
+    This downloader automates the process of fetching transactions from American Express.
+    It prefers using the internal JSON API (`searchTransaction.json`) over CSV downloads
+    for cleaner data and better reliability.
     
     Workflow:
-    1.  Interactive Login: The user logs in manually.
-    2.  Navigation: The script ensures the user is on the "Statements & Activity" page.
-    3.  Discovery: It scans the page for available statement download buttons.
-    4.  Download: It triggers the download for each available statement (CSV format).
-    5.  Parsing: It reads the downloaded CSV files and normalizes the data.
+    1.  Interactive Login: User logs in manually.
+    2.  Account Discovery: Scrapes account ID from "Recent Activity" and balances from "Dashboard".
+    3.  API Fetch: Uses `page.request.get` to call the internal API with the proper session headers.
+    4.  Parsing: Converts the JSON response into standard Transaction objects.
     """
     
     from datetime import datetime, timedelta
@@ -157,7 +157,11 @@ class AmexDownloader(BankDownloader):
     def download_transactions(self) -> List[Transaction]:
         """
         Download transactions using the internal JSON API.
-        This provides more reliable data than parsing the CSV download.
+        
+        This method uses the `searchTransaction.json` endpoint which powers the
+        "Recent Activity" view on the website. This provides a more robust data source
+        than scraping HTML or downloading CSVs, as it includes unique reference numbers
+        and detailed description fields.
         """
         print("Fetching transactions via API...")
         
@@ -187,6 +191,10 @@ class AmexDownloader(BankDownloader):
     def _fetch_transactions_api(self, start_date: str, end_date: str) -> Dict[str, Any]:
         """
         Execute the internal API call using page.request to bypass 'eval disabled' restrictions.
+        
+        Using `self.page.request` is crucial here because it automatically includes
+        all the cookies from the browser session (authentication, session ID), which
+        are required to authorize the API call.
         """
         url = (
             f"https://global.americanexpress.com/myca/intl/istatement/canlac/searchTransaction.json"

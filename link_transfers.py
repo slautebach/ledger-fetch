@@ -1,23 +1,29 @@
+"""
+Transfer Linking Utility
+
+This script identifies and links matching transfer transactions across all downloaded CSVs.
+It is designed to be run after all transactions have been fetched and normalized.
+
+Matching Logic:
+A "Transfer" is defined as a pair of transactions that:
+1.  Occur on the same date (or very close, but we enforce same date for now).
+2.  Have equal but opposite amounts (e.g., +500.00 and -500.00).
+3.  Belong to DIFFERENT accounts.
+4.  Are unambiguous (exactly one match found).
+
+Outputs:
+- Updates the input CSV files with a `Transfer Id` column.
+- Generates `matched_transfers.csv` summarizing all links.
+- Generates `ambiguous_transfers.log` for manual review of potential conflicts.
+"""
+
 import pandas as pd
 import argparse
 from pathlib import Path
 from ledger_fetch.config import settings
 
 def link_transfers():
-    """
-    Scans all transaction CSV files in the configured output directory,
-    identifies matching transfers based on specific criteria, and updates
-    the 'Transfer Id' column with the ID of the matching transaction.
-
-    Matching Criteria (Strict):
-    - Same Date
-    - Opposite Amounts (e.g. +100.00 and -100.00)
-    - Distinct Accounts (Source Account != Target Account)
-    - No Ambiguity (Must be exactly 1 positive and 1 negative candidate)
-    
-    Logging:
-    - Ambiguous matches are logged to 'ambiguous_transfers.log'
-    """
+    """Execute the transfer linking logic."""
     parser = argparse.ArgumentParser(description="Link matching transfers in transaction CSV files.")
     parser.add_argument("--clear-transfers", action="store_true", help="Clear all existing transfer links before processing.")
     args = parser.parse_args()

@@ -10,14 +10,17 @@ class RBCDownloader(BankDownloader):
     """
     RBC (Royal Bank of Canada) Transaction Downloader.
     
-    This downloader uses the internal API to fetch transactions directly,
-    bypassing the CSV download workflow for better reliability and data quality.
+    This downloader primarily uses a reverse-engineered internal API to fetch transactions directly,
+    which provides better reliability and data quality than parsing the legacy CSV export.
     
     Workflow:
-    1.  Interactive Login: The user logs in manually.
-    2.  Account Discovery: Fetches list of accounts from `accountListSummary` endpoint.
-    3.  Transaction Fetching: Iterates through accounts and fetches transactions via `arrangements/pda` endpoint.
-    4.  Normalization: Normalizes JSON data to standard schema.
+    1.  Interactive Login: User logs in manually via the guided browser.
+    2.  Account Discovery: Fetches account list from the `accountListSummary` endpoint.
+    3.  Transaction Fetching: Iterates through accounts and fetches transactions via 
+        `arrangements/pda` (for banking) or `transactions/cc` (for credit cards).
+    4.  CSV Fallback: If API fetching fails for any account, it attempts to download and parse 
+        the legacy CSV file as a backup.
+    5.  Normalization: Normalizes raw API/CSV data into the standard Transaction model.
     """
 
     def get_bank_name(self) -> str:
@@ -399,7 +402,17 @@ class RBCDownloader(BankDownloader):
             return None
 
     def download_transactions(self) -> List[Transaction]:
-        """Orchestrate the download process (API + CSV Fallback)."""
+        """
+        Orchestrate the download process (API + CSV Fallback).
+        
+        Strategy:
+        1. Attempt to fetch transactions via the internal API for all accounts found.
+        2. Keep track of which accounts were successfully fetched via API.
+        3. If any accounts were missed or failed, or if we just want coverage, run the 
+           legacy CSV download.
+        4. When processing the CSV, skip transactions for accounts that were already 
+           handled by the API to avoid duplicates.
+        """
         all_transactions = []
         seen_ids = set()
         

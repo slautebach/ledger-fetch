@@ -10,13 +10,19 @@ from .models import Transaction, Account, AccountType
 
 class CIBCDownloader(BankDownloader):
     """
-    Downloader for CIBC (Canadian Imperial Bank of Commerce).
+    CIBC Transaction Downloader (API Interception)
     
-    This downloader uses a hybrid approach:
-    1.  Interactive Login: The user logs in manually via a browser window.
-    2.  Token Interception: The script listens for API requests to capture session tokens.
-    3.  API Direct Access: Once tokens are captured, it uses the internal CIBC JSON API 
-        to fetch transactions directly, bypassing the UI for data retrieval.
+    This downloader automates the process of fetching transactions from CIBC Online Banking.
+    Since CIBC's frontend is a Single Page Application (SPA) driven by a REST API, 
+    we can intercept the authentication tokens generated during login and use them 
+    to make direct API calls.
+    
+    Workflow:
+    1.  Interactive Login: User logs in manually via Playwright.
+    2.  Token Capture: The script monitors background network requests (using `page.on("request")`)
+        to capture the `x-auth-token` header used by the SPA.
+    3.  Account Discovery: Scrapes account names and IDs from the dashboard HTML.
+    4.  API Fetch: Uses the captured token to call `/ebm-ai/api/v1/json/transactions` directly.
     """
     
     def get_bank_name(self) -> str:
