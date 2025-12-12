@@ -513,7 +513,6 @@ async function main() {
       console.error(`    Error reconciling account "${accountName}": ${e.message}`);
     }
   }
-
   console.log('Syncing with server...');
   await api.sync();
 

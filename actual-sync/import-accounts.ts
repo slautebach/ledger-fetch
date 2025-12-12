@@ -158,8 +158,8 @@ async function main() {
 
             for (const csvAcc of csvAccounts) {
                 const accountId = csvAcc['Unique Account ID'];
-                const accountName = csvAcc['Account Name'];
-                const accountType = csvAcc['Type'];
+                const accountName = csvAcc['Account Name'].trim();
+                const accountType = csvAcc['Type'].trim();
 
                 if (!accountId) continue;
 
@@ -216,6 +216,10 @@ async function main() {
                 }
             }
         }
+
+        console.log('Syncing with server...');
+        await api.sync();
+
     }
 
     console.log('Done.');
