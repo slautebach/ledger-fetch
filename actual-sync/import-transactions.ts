@@ -425,9 +425,9 @@ async function main() {
           console.error(`      Error importing transactions: ${e.message}`);
         }
       }
-      console.log(`    Syncing transactions for ${path.basename(file)}...`);
-      await api.sync();
     }
+    console.log(`    Syncing transactions for bank ${bankName}...`);
+    await api.sync();
   }
 
   // 6. Phase 3: Reconciliation (Global)

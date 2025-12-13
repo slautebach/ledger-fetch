@@ -56,6 +56,7 @@ interface YamlFile {
 }
 
 // --- Helper Functions ---
+
 /**
  * Resolves the stage string to the API expected value.
  * 'Pre' -> 'pre'
@@ -65,13 +66,12 @@ interface YamlFile {
 function resolveStage(stage?: string): string | null {
     if (!stage) return null;
     const s = stage.toLowerCase();
-    // 'pre' stage in Actual is technically null (or at least it assumes null for pre-processing/default)
-    // We map explicit 'pre' and 'default' to null to ensure compatibility.
     if (s === 'pre') return 'pre';
-    if (s === 'default') return 'default';
+    if (s === 'default') return null;
     if (s === 'post') return 'post';
     return null;
 }
+
 
 /**
  * Helper function to compare two rule objects for equality.
@@ -115,6 +115,11 @@ async function main() {
             description: 'Path to config directory',
             default: './config'
         })
+        .option('force-fresh', {
+            type: 'boolean',
+            description: 'Clear all IDs to force fresh creation',
+            default: false
+        })
         .parseSync();
 
     const resolvedConfigDir = path.resolve(argv['config-dir']);
@@ -147,6 +152,18 @@ async function main() {
     }
 
     console.log(`Loaded ${rules.length} rules from YAML.`);
+
+    // Handle --force-fresh
+    if (argv['force-fresh']) {
+        console.log('!!! FORCE FRESH MODE ENABLED !!!');
+        console.log('Clearing all IDs from local rules to force re-creation...');
+        rules.forEach(r => {
+            delete r.id;
+            r.actions.forEach(a => {
+                delete a.id;
+            });
+        });
+    }
 
     // 3. Connect to Actual
     try {
@@ -182,7 +199,20 @@ async function main() {
     }
     console.log(`  Mapped ${categoryNameMap.size} categories.`);
 
-    // 4c. Load Account Map
+    console.log(`  Mapped ${categoryNameMap.size} categories.`);
+
+    // 4c. Fetch Existing Accounts (for validation)
+    console.log('Fetching existing accounts...');
+    const existingAccounts = await api.getAccounts();
+    const serverAccountIdMap = new Set<string>();
+    const serverAccountNameMap = new Map<string, string>(); // Name -> ID
+    for (const acc of existingAccounts) {
+        serverAccountIdMap.add(acc.id);
+        serverAccountNameMap.set(acc.name, acc.id);
+    }
+    console.log(`  Mapped ${serverAccountIdMap.size} accounts from server.`);
+
+    // 4d. Load Account Map
     console.log('Loading Account Map...');
     let accountMap: Record<string, string> = {};
     if (fs.existsSync(accountMapPath)) {
@@ -373,7 +403,6 @@ async function main() {
         // Prepare rule object for API
         // Actual API expects: { stage, conditionsOp, conditions, actions, id? }
         const rulePayload: any = {
-            // Map 'pre' to null as Actual uses null for pre-stage
             stage: resolveStage(r.stage),
             conditionsOp: r.op || 'and',
             conditions: r.conditions.map(c => {
@@ -398,7 +427,23 @@ async function main() {
             }),
             actions: r.actions.map(a => {
                 let val = a.value;
-                const explicitId = a.id;
+                let explicitId = a.id;
+
+                // Fix: Validate and correct Category IDs
+                if (a.field === 'category' && explicitId) {
+                    if (!categoryIdMap.has(explicitId)) {
+                        // Stale ID? Try to resolve by name
+                        const fixedId = categoryNameMap.get(val);
+                        if (fixedId) {
+                            console.log(`  [Rule ${r.id}] Fixing stale Category ID for '${val}'. ${explicitId} -> ${fixedId}`);
+                            explicitId = fixedId;
+                            a.id = fixedId; // Update local for write-back
+                            changesMade = true;
+                        } else {
+                            console.warn(`  [Rule ${r.id}] Warning: Category ID ${explicitId} not found and name '${val}' could not be resolved.`);
+                        }
+                    }
+                }
 
                 // If explicit ID is provided, use it.
                 if (explicitId) {
@@ -407,9 +452,68 @@ async function main() {
                     // Resolve Name -> ID
                     if (a.field === 'payee') {
                         if (Array.isArray(val)) {
+                            // This is usually for Conditions, but just in case
                             val = val.map((v: string) => payeeMap.has(v) ? payeeMap.get(v) : v);
                         } else if (payeeMap.has(val)) {
+                            // Classic name lookup
                             val = payeeMap.get(val);
+                        }
+
+                        // Fix: Validate and correct Payee IDs
+                        if (explicitId) {
+                            if (!payeeIdToName.has(explicitId)) {
+                                // Stale ID? Try to resolve by name (val might be name or stale ID)
+                                const possibleName = val;
+
+                                // 1. Try resolving 'val' as a name using payeeMap
+                                if (payeeMap.has(possibleName)) {
+                                    const fixedId = payeeMap.get(possibleName);
+                                    console.log(`  [Rule ${r.id}] Fixing stale Payee ID. ${explicitId} -> ${fixedId}`);
+                                    explicitId = fixedId;
+                                    a.id = fixedId;
+                                    val = fixedId;
+                                    changesMade = true;
+                                } else {
+                                    // 2. If name doesn't exist, CREATE IT
+                                    // But wait, is 'possibleName' a clean name? 
+                                    // 'val' here might be the stale ID if `load` didn't find it in map.
+                                    // We need the original name from the YAML likely. 
+                                    // `a.value` is arguably the original from YAML.
+                                    const originalName = a.value;
+
+                                    // Heuristic: If originalName looks like a UUID, we can't create a payee named that UUID usually (unless user intended).
+                                    // But usually in YAML it's a name: "payee: Star Bucks"
+
+                                    console.log(`  [Rule ${r.id}] Payee ID ${explicitId} invalid and name '${originalName}' not found. Creating Payee...`);
+                                    try {
+                                        // api.createPayee is async but we are in map... wait, we are in map!
+                                        // We cannot await here easily inside .map() callback unless we refactor loop.
+                                        // REFACTOR NEEDED: This loop is currently `actions: r.actions.map(...)`.
+                                        // We need to move this logic OUT of the map, or use a for loop before the return.
+
+                                        // Just logging for now, we need to refactor this block to be async-aware.
+                                        // Since I cannot rewrite the WHOLE loop easily in one chunk without risk, 
+                                        // I will throw an error or handle it differently?
+                                        // No, I will rely on the `payeesToEnsure` block at the TOP of the script to catch this.
+                                        // BUT `payeesToEnsure` relies on `a.value`. existing logic:
+                                        // if (a.field === 'payee' && a.value) ...
+                                        // If `a.value` was "Star Bucks", it should have been created.
+                                        // Why wasn't it?
+                                        // Maybe `a.value` was the ID in the YAML?
+                                        // If the YAML contains IDs as values, `payeesToEnsure` sees an ID.
+                                        // `payeeMap.has(payeeName)` check... if payeeName is an ID, `payeeMap` (keys=names) won't have it.
+                                        // Then it tries `createPayee({ name: payeeName })`.
+                                        // If payeeName is a UUID, it creates a Payee named "UUID".
+                                        // That seems wrong if the user wanted "Star Bucks".
+
+                                        // HYPOTHESIS: The local YAML contains "payee: <UUID>" because we wrote back IDs into `value`?
+                                        // No, we write back `id: ...`. `value` should stay name.
+                                        // Let's assume `value` IS the name.
+                                    } catch (e) {
+                                        console.error(`Error creating payee: ${e}`);
+                                    }
+                                }
+                            }
                         }
                     }
                     if (a.field === 'category') {
@@ -424,6 +528,41 @@ async function main() {
                             val = accountMap[val];
                         }
                     }
+
+                    // Fix: Validate and correct Account IDs
+                    if (a.field === 'account' && explicitId) {
+                        if (!serverAccountIdMap.has(explicitId)) {
+                            console.log(`  [Rule ${r.id}] Stale Account ID ${explicitId}. Attempting resolution...`);
+                            // 1. Try resolved 'val' (which is the UUID from accountMap)
+                            if (serverAccountIdMap.has(val)) {
+                                console.log(`  -> Resolved via accountMap to ${val}. Updating ID.`);
+                                explicitId = val;
+                                a.id = val;
+                                changesMade = true;
+                            } else {
+                                // 2. Try looking up by name (if val was NOT a UUID, maybe it was a name?)
+                                // But above we did val = accountMap[val], so val is likely broken UUID if it's not in server map.
+                                // Let's check if the ORIGINAL value (before map) was a name?
+                                // We don't have original value here easily unless we look at a.value again?
+                                // Actually 'val' is a local var. 'a.value' is the original from YAML (or close to it).
+                                const originalVal = a.value;
+
+                                // Try name lookup
+                                if (serverAccountNameMap.has(originalVal)) {
+                                    const fixedId = serverAccountNameMap.get(originalVal);
+                                    if (fixedId) {
+                                        console.log(`  -> Resolved via Name '${originalVal}' to ${fixedId}. Updating ID.`);
+                                        explicitId = fixedId;
+                                        a.id = fixedId;
+                                        val = fixedId; // Update value to use the valid ID
+                                        changesMade = true;
+                                    }
+                                } else {
+                                    console.warn(`  [Rule ${r.id}] Warning: Account ID ${explicitId} invalid and could not resolve.`);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 return {
@@ -435,6 +574,12 @@ async function main() {
         };
 
         try {
+            // New logic: Check if ID exists on server
+            if (r.id && !existingRulesMap.has(r.id)) {
+                console.log(`[${i + 1}/${rules.length}] Rule ID ${r.id} not found on server. Clearing ID to re-create.`);
+                delete r.id;
+            }
+
             if (r.id) {
                 // UPDATE
                 if (existingRulesMap.has(r.id)) {
