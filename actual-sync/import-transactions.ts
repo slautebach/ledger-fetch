@@ -185,7 +185,7 @@ async function main() {
   // that a corresponding account exists in Actual Budget.
   console.log('\n--- Phase 1: Account Creation ---');
   let accountsCache = await api.getAccounts();
-  const accountBalances = new Map<string, { balance: number, name: string }>(); // Map Unique Account ID to { balance, name }
+  const accountBalances = new Map<string, { balance: number, name: string, type: string }>(); // Map Unique Account ID to { balance, name, type }
   const newlyCreatedBankLinkIds = new Set<string>();
   const earliestTransactionDates = new Map<string, string>(); // Map Unique Account ID to YYYY-MM-DD
 
@@ -208,7 +208,8 @@ async function main() {
               const balance = data['Current Balance'] ? Math.round(parseFloat(data['Current Balance']) * 100) : 0;
               accountBalances.set(data['Unique Account ID'], {
                 balance: balance,
-                name: data['Account Name']
+                name: data['Account Name'],
+                type: data['Type']
               });
             }
           })
@@ -386,18 +387,29 @@ async function main() {
         if (!actualAccount) continue; // Safety check
 
         // Prepare Transactions
+        const isInvestment = accountBalances.get(accountId)?.type?.toLowerCase().includes('investment');
+
         const actualTransactions: ActualTransaction[] = txs.map(tx => {
-          // Amount: CSV is usually float, Actual needs integer cents
-          const amount = Math.round(parseFloat(tx['Amount']) * 100);
-
-          // Date: Actual needs YYYY-MM-DD
-          const dateStr = tx['Date'].substring(0, 10);
-
           // Payee: Use 'Payee' or 'Payee Name' if available, else 'Description'
           const payee = tx['Payee Name'] || tx['Payee'] || tx['Description'];
 
           // Notes: Use 'Notes' if available
           let notes = tx['Description'] || tx['Notes'] || '';
+
+          // Amount: CSV is usually float, Actual needs integer cents
+          let amountVal = parseFloat(tx['Amount']);
+
+          // Special logic for Investment Accounts: "Trade" transactions should be 0 amount
+          if (isInvestment && payee === 'Trade') {
+            const originalAmountNote = `(Original Amount: ${tx['Amount']})`;
+            notes = notes ? `${notes} ${originalAmountNote}` : originalAmountNote;
+            amountVal = 0;
+          }
+
+          const amount = Math.round(amountVal * 100);
+
+          // Date: Actual needs YYYY-MM-DD
+          const dateStr = tx['Date'].substring(0, 10);
 
           // Append Transfer status to notes
           if (tx['Is Transfer'] === 'True' || tx['Is Transfer'] === 'true' || tx['Is Transfer'] === '1') {
@@ -439,7 +451,7 @@ async function main() {
   accountsCache = await api.getAccounts();
 
   for (const [uniqueAccountId, info] of accountBalances) {
-    const { balance: expectedBalance, name: accountName } = info;
+    const { balance: expectedBalance, name: accountName, type: accountType } = info;
 
     // Find the account in Actual
     let actualAccount = null;
@@ -468,42 +480,96 @@ async function main() {
         const diff = expectedBalance - currentBalance;
         console.log(`    [Balance Mismatch] Account "${actualAccount.name}": Expected ${expectedBalance / 100}, Actual ${currentBalance / 100}, Diff ${diff / 100}`);
 
-        // CHECK IF THIS IS A NEW ACCOUNT
-        if (newlyCreatedBankLinkIds.has(uniqueAccountId)) {
-          console.log(`    -> Account is NEW. Creating initial reconciliation transaction...`);
+        // --- INVESTMENT ACCOUNT LOGIC ---
+        const isInvestment = accountType && accountType.toLowerCase().includes('investment');
 
-          const transactionId = crypto.createHash('md5').update(uniqueAccountId + '_initial_reconcile').digest('hex');
+        if (isInvestment) {
+          console.log(`    -> Investment Account Detected. Creating adjustment transaction.`);
 
-          // Calculate date: Day before earliest transaction, or today if no transactions
-          let dateStr = new Date().toISOString().substring(0, 10);
-          const earliestDate = earliestTransactionDates.get(uniqueAccountId);
-          if (earliestDate) {
-            const dateObj = new Date(earliestDate);
-            dateObj.setDate(dateObj.getDate() - 1);
-            dateStr = dateObj.toISOString().substring(0, 10);
-            console.log(`      Earliest transaction: ${earliestDate}. Setting reconciliation date to: ${dateStr}`);
-          } else {
-            console.log(`      No transactions found. Setting reconciliation date to today: ${dateStr}`);
-          }
+          const transactionId = crypto.createHash('md5').update(uniqueAccountId + '_reconcile_' + new Date().toISOString().substring(0, 10)).digest('hex');
+          const dateStr = new Date().toISOString().substring(0, 10); // Today's date
+
+          const payeeName = diff > 0 ? 'Unrealized Investment Gains' : 'Unrealized Investment Loss';
 
           const reconciliationTx: ActualTransaction = {
             date: dateStr,
-            amount: diff, // The difference is what we need to add/subtract
-            payee_name: 'Manual Balance Adjustment',
+            amount: diff,
+            payee_name: payeeName,
             imported_id: transactionId,
-            notes: 'Initial reconciliation balance adjustment',
+            notes: 'Automatic Investment Reconciliation',
             cleared: true,
             account: actualAccount.id
           };
 
           try {
             await api.importTransactions(actualAccount.id, [reconciliationTx]);
-            console.log(`      SUCCESS: Created initial reconciliation transaction for ${diff / 100}`);
+            console.log(`      SUCCESS: Created investment adjustment (${payeeName}) for ${diff / 100}`);
           } catch (e: any) {
-            console.error(`      ERROR: Failed to create reconciliation transaction: ${e.message}`);
+            console.error(`      ERROR: Failed to create investment adjustment: ${e.message}`);
           }
+
         } else {
-          console.log(`    -> Account is EXISTING. Skipping auto-reconciliation.`);
+          // --- STANDARD ACCOUNT LOGIC (Initial Only) ---
+
+          // Check for existing reconciliation transaction
+          const RECONCILIATION_NOTE = 'Initial reconciliation balance adjustment';
+          let allTransactions: any[] = [];
+          try {
+            // Fetch all transactions to check for existing reconciliation (using wide date range)
+            allTransactions = await api.getTransactions(actualAccount.id, '1900-01-01', '2100-01-01');
+          } catch (e: any) {
+            console.warn(`    Warning: Could not fetch transactions for check: ${e.message}`);
+          }
+
+          const existingReconciliationTx = allTransactions.find((t: any) =>
+            t.notes === RECONCILIATION_NOTE || (t.notes && t.notes.includes(RECONCILIATION_NOTE))
+          );
+
+          if (existingReconciliationTx) {
+            console.log(`    -> reconciliation transaction already exists (Date: ${existingReconciliationTx.date}). Skipping auto-reconciliation.`);
+          } else {
+            console.log(`    -> Reconciliation needed (No existing '${RECONCILIATION_NOTE}' found). Creating transaction...`);
+
+            const transactionId = crypto.createHash('md5').update(uniqueAccountId + '_initial_reconcile').digest('hex');
+
+            // Calculate date: Day before earliest transaction (from CSV or existing), or today
+            let dateStr = new Date().toISOString().substring(0, 10);
+
+            let referenceDate = earliestTransactionDates.get(uniqueAccountId);
+
+            // If no CSV transactions, try to find earliest existing transaction
+            if (!referenceDate && allTransactions.length > 0) {
+              // sort by date asc
+              const sortedTxs = allTransactions.sort((a: any, b: any) => a.date.localeCompare(b.date));
+              referenceDate = sortedTxs[0].date;
+            }
+
+            if (referenceDate) {
+              const dateObj = new Date(referenceDate);
+              dateObj.setDate(dateObj.getDate() - 1);
+              dateStr = dateObj.toISOString().substring(0, 10);
+              console.log(`      Reference transaction date: ${referenceDate}. Setting reconciliation date to: ${dateStr}`);
+            } else {
+              console.log(`      No transactions found to reference. Setting reconciliation date to today: ${dateStr}`);
+            }
+
+            const reconciliationTx: ActualTransaction = {
+              date: dateStr,
+              amount: diff, // The difference is what we need to add/subtract
+              payee_name: 'Manual Balance Adjustment',
+              imported_id: transactionId,
+              notes: RECONCILIATION_NOTE,
+              cleared: true,
+              account: actualAccount.id
+            };
+
+            try {
+              await api.importTransactions(actualAccount.id, [reconciliationTx]);
+              console.log(`      SUCCESS: Created initial reconciliation transaction for ${diff / 100}`);
+            } catch (e: any) {
+              console.error(`      ERROR: Failed to create reconciliation transaction: ${e.message}`);
+            }
+          }
         }
 
       } else {
