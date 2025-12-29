@@ -49,6 +49,7 @@ interface CsvTransaction {
   'Is Transfer'?: string;
   'Transfer Id'?: string;
   'Notes'?: string;
+  'Pending'?: string;
 }
 
 interface CsvAccount {
@@ -324,6 +325,11 @@ async function main() {
       // Group by Account ID
       const transactionsByAccount: Record<string, CsvTransaction[]> = {};
       for (const tx of transactions) {
+        // Skip pending transactions
+        if (tx['Pending'] === 'True' || tx['Pending'] === 'true') {
+          continue;
+        }
+
         const accountId = tx['Unique Account ID'];
         if (!accountId) continue;
         if (!transactionsByAccount[accountId]) {
