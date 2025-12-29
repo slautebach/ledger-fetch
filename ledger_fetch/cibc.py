@@ -362,6 +362,7 @@ class CIBCDownloader(BankDownloader):
                         txn.raw_data['Transaction Location'] = tx.get('transactionLocation')
                         txn.raw_data['Merchant Category ID'] = tx.get('merchantCategoryId')
                         txn.raw_data['FIT ID'] = tx.get('fitId')
+                        txn.is_pending = bool(tx.get('pendingIndicator'))
                         txn.raw_data['Pending'] = tx.get('pendingIndicator')
                         txn.raw_data['Description Line 1'] = tx.get('descriptionLine1')
                         txn.raw_data['Description Line 2'] = tx.get('descriptionLine2')

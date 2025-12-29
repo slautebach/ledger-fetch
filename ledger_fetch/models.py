@@ -95,6 +95,7 @@ class Transaction(BaseModel):
         'Currency',
         'Category',
         'Is Transfer',
+        'Pending',
         'Notes'
     ]
 
@@ -196,6 +197,15 @@ class Transaction(BaseModel):
         self.set('Is Transfer', value)
 
     @property
+    def is_pending(self) -> bool:
+        """Flag indicating if this transaction is pending."""
+        return self.get('Pending', False)
+
+    @is_pending.setter
+    def is_pending(self, value: bool):
+        self.set('Pending', value)
+
+    @property
     def notes(self) -> str:
         """Additional notes or memo."""
         return self.get('Notes', '')
@@ -216,6 +226,7 @@ class Transaction(BaseModel):
             'Currency': self.currency,
             'Category': self.category,
             'Is Transfer': self.is_transfer,
+            'Pending': self.is_pending,
             'Notes': self.notes,
         }
 

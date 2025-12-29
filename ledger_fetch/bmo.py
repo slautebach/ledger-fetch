@@ -486,85 +486,90 @@ class BMODownloader(BankDownloader):
             return []
 
     def _parse_transaction_response(self, json_data: Dict[str, Any], account: Account) -> List[Transaction]:
-        """Parse BMO API JSON response and normalize to standard format.
-        
-        Args:
-            json_data: Raw JSON response from BMO API
-            account: The account object
-            
-        Returns:
-            List of normalized transaction objects
-        """
+        """Parse BMO API JSON response and normalize to standard format."""
         transactions = []
         
         # Get posted transactions
         posted_txns = json_data.get('postedTransactions', {}).get('transactions', [])
-        
         print(f"Found {len(posted_txns)} posted transactions")
         
         for txn_data in posted_txns:
-            # Extract fields
-            txn_date = txn_data.get('txnDate', '')  # Transaction date (YYYY-MM-DD)
-            post_date = txn_data.get('postDate', '')  # Posted date (YYYY-MM-DD)
-            description = txn_data.get('descr', '')
-            merchant_name = txn_data.get('merchantName', '')
-            amount_val = float(txn_data.get('amount', 0))
-            txn_indicator = txn_data.get('txnIndicator', 'DR')  # DR = Debit, CR = Credit
-            txn_id = txn_data.get('transactionId', '')
-            txn_ref = txn_data.get('txnRefNumber', '')
-            txn_code = txn_data.get('txnCode', '')
-            
-            # Use posted date as the primary date (when it cleared)
-            date = TransactionNormalizer.normalize_date(post_date if post_date else txn_date)
-            
-            # Clean description
-            description = TransactionNormalizer.clean_description(description)
-            
-            payee_name = TransactionNormalizer.normalize_payee(description)
-
-            # Determine signed amount
-            # DR (Debit) = money spent (negative)
-            # CR (Credit) = payment/refund (positive)
-            if txn_indicator == 'DR':
-                amount = -amount_val
-            else:
-                amount = amount_val
-            
-            # Use BMO's transaction ID, or generate one if missing
-            unique_id = txn_id if txn_id else TransactionNormalizer.generate_transaction_id(
-                date, amount, description, account.unique_account_id
-            )
-            
-            # Create Transaction
-            txn = Transaction(txn_data, account.unique_account_id)
-            txn.unique_transaction_id = unique_id
-            txn.account_name = account.account_name
-            txn.date = date
-            txn.description = description
-
-            txn.payee_name = payee_name # Normalized payee
-            txn.amount = amount
-            txn.currency = 'CAD'
-            
-            # BMO-specific fields in raw_data (already passed in constructor, but we can add more if needed)
-            txn.raw_data['Transaction Date'] = txn_date
-            txn.raw_data['Post Date'] = post_date
-            txn.raw_data['Merchant Name'] = merchant_name
-            txn.raw_data['Transaction Indicator'] = txn_indicator
-            txn.raw_data['Transaction Code'] = txn_code
-            txn.raw_data['Reference Number'] = txn_ref
-            
+            txn = self._create_transaction_from_dict(txn_data, account, is_pending=False)
             transactions.append(txn)
         
-        # Also get pending transactions if any
+        # Get pending transactions
         pending_txns = json_data.get('pendingTransactions', {}).get('transactions', [])
         if pending_txns:
-            print(f"Found {len(pending_txns)} pending transactions (not included in output)")
-            # Note: We're not including pending transactions as they haven't cleared yet
-            # If you want to include them, you can parse them similarly
+            print(f"Found {len(pending_txns)} pending transactions")
+            for txn_data in pending_txns:
+                txn = self._create_transaction_from_dict(txn_data, account, is_pending=True)
+                transactions.append(txn)
         
-        print(f"Parsed {len(transactions)} posted transactions")
+        print(f"Parsed {len(transactions)} total transactions")
         return transactions
+
+    def _create_transaction_from_dict(self, txn_data: Dict[str, Any], account: Account, is_pending: bool) -> Transaction:
+        """Helper to create a Transaction object from a raw BMO dictionary."""
+        # Extract fields
+        txn_date = txn_data.get('txnDate', '')  # Transaction date (YYYY-MM-DD)
+        post_date = txn_data.get('postDate', '')  # Posted date (YYYY-MM-DD)
+        description = txn_data.get('descr', '')
+        merchant_name = txn_data.get('merchantName', '')
+        amount_val = float(txn_data.get('amount', 0))
+        txn_indicator = txn_data.get('txnIndicator', 'DR')  # DR = Debit, CR = Credit
+        txn_id = txn_data.get('transactionId', '')
+        txn_ref = txn_data.get('txnRefNumber', '')
+        txn_code = txn_data.get('txnCode', '')
+        
+        # Use posted date as the primary date if available, otherwise transaction date
+        date_str = post_date if post_date else txn_date
+        # If pending, we might only have txnDate
+        if not date_str and is_pending:
+             date_str = datetime.now().strftime('%Y-%m-%d') # Fallback if absolutely no date
+
+        date = TransactionNormalizer.normalize_date(date_str)
+        
+        # Clean description
+        description = TransactionNormalizer.clean_description(description)
+        
+        payee_name = TransactionNormalizer.normalize_payee(description)
+
+        # Determine signed amount
+        # DR (Debit) = money spent (negative)
+        # CR (Credit) = payment/refund (positive)
+        if txn_indicator == 'DR':
+            amount = -amount_val
+        else:
+            amount = amount_val
+        
+        # Use BMO's transaction ID, or generate one if missing
+        unique_id = txn_id if txn_id else TransactionNormalizer.generate_transaction_id(
+            date, amount, description, account.unique_account_id
+        )
+        
+        # Create Transaction
+        txn = Transaction(txn_data, account.unique_account_id)
+        txn.unique_transaction_id = unique_id
+        txn.account_name = account.account_name
+        txn.date = date
+        txn.description = description
+
+        txn.payee_name = payee_name # Normalized payee
+        txn.amount = amount
+        txn.currency = 'CAD'
+        
+        # Set standardized Pending flag
+        txn.is_pending = is_pending
+        
+        # BMO-specific fields in raw_data
+        txn.raw_data['Transaction Date'] = txn_date
+        txn.raw_data['Post Date'] = post_date
+        txn.raw_data['Merchant Name'] = merchant_name
+        txn.raw_data['Transaction Indicator'] = txn_indicator
+        txn.raw_data['Transaction Code'] = txn_code
+        txn.raw_data['Reference Number'] = txn_ref
+        
+        return txn
 
     def _scrape_details_balance(self) -> float:
         """Scrape balance from the account details page."""

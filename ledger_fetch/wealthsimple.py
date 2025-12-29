@@ -307,6 +307,10 @@ class WealthsimpleDownloader(BankDownloader):
         txn.raw_data['Type'] = trans_type
         txn.raw_data['ID'] = ws_id
         
+        # Check for pending status on credit cards
+        if account.type == AccountType.CREDIT_CARD and "(Pending)" in raw_description:
+            txn.is_pending = True
+        
         return txn
 
     def _setup_monkey_patch(self):
