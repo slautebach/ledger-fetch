@@ -406,7 +406,8 @@ async function main() {
           let amountVal = parseFloat(tx['Amount']);
 
           // Special logic for Investment Accounts: "Trade" transactions should be 0 amount
-          if (isInvestment && payee === 'Trade') {
+          const tradePayees = ['Trade', 'Market buy', 'Market sell', 'Recurring Buy'];
+          if (isInvestment && payee && tradePayees.includes(payee)) {
             const originalAmountNote = `(Original Amount: ${tx['Amount']})`;
             notes = notes ? `${notes} ${originalAmountNote}` : originalAmountNote;
             amountVal = 0;

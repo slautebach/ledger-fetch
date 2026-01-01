@@ -30,7 +30,7 @@ Dependencies:
 """
 from ledger_fetch.config import settings
 from ledger_fetch.base import BankDownloader
-from ledger_fetch.utils import TransactionNormalizer
+from ledger_fetch.utils import TransactionNormalizer, CSVWriter
 from ledger_fetch.rbc import RBCDownloader
 from ledger_fetch.wealthsimple import WealthsimpleDownloader
 from ledger_fetch.amex import AmexDownloader
@@ -106,13 +106,22 @@ def run_normalization():
             df['Payee'] = df['Description'].apply(lambda x: TransactionNormalizer.normalize_payee(str(x)))
             df['Payee Name'] = df['Payee']
             
-            # Save back to CSV
-            df.to_csv(file_path, index=False)
+            # Save back to CSV using CSVWriter to ensure consistent formatting and blank column removal
+            # Fill NaNs with empty string to ensure blank columns are correctly identified
+            records = df.fillna("").to_dict(orient='records')
+            
+            # CSVWriter expects output_dir in init
+            writer = CSVWriter(file_path.parent)
+            writer.write(records, file_path.name)
+            
             print(f"  Updated {file_path.name}")
             count += 1
             
         except Exception as e:
             print(f"  Error processing {file_path.name}: {e}")
+            if settings.debug:
+                 import traceback
+                 traceback.print_exc()
     
     print(f"Normalization complete. Processed {count} files.")
 

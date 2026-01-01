@@ -21,11 +21,13 @@ import * as yaml from 'js-yaml';
 
 export interface Category {
     name: string;
+    hidden?: boolean;
 }
 
 export interface CategoryGroup {
     name: string;
     is_income?: boolean;
+    hidden?: boolean;
     categories: Category[];
 }
 
@@ -78,7 +80,8 @@ export class CategoryImporter {
                 try {
                     const newGroupId = await api.createCategoryGroup({
                         name: yamlGroup.name,
-                        is_income: yamlGroup.is_income || false
+                        is_income: yamlGroup.is_income || false,
+                        hidden: yamlGroup.hidden || false
                     });
                     // Construct a local representation of the new group
                     group = { id: newGroupId, name: yamlGroup.name, categories: [] };
@@ -88,6 +91,15 @@ export class CategoryImporter {
                 }
             } else {
                 console.log(`Group "${yamlGroup.name}" exists.`);
+                // Update hidden status if changed
+                if (group.hidden !== (yamlGroup.hidden || false)) {
+                    console.log(`  Updating hidden status for group "${yamlGroup.name}" to ${yamlGroup.hidden || false}`);
+                    try {
+                        await api.updateCategoryGroup(group.id, { hidden: yamlGroup.hidden || false });
+                    } catch (e: any) {
+                        console.error(`  Error updating group "${yamlGroup.name}": ${e.message}`);
+                    }
+                }
             }
 
             // 3. Sync Categories
@@ -104,7 +116,8 @@ export class CategoryImporter {
                             if (group.id) {
                                 await api.createCategory({
                                     name: yamlCategory.name,
-                                    group_id: group.id
+                                    group_id: group.id,
+                                    hidden: yamlCategory.hidden || false
                                 });
                             } else {
                                 console.log(`    Skipping creation because group ID is missing.`);
@@ -114,11 +127,19 @@ export class CategoryImporter {
                         }
                     } else {
                         // console.log(`  Category "${yamlCategory.name}" already exists.`);
+                        // Update hidden status if changed
+                        if (category.hidden !== (yamlCategory.hidden || false)) {
+                            console.log(`  Updating hidden status for category "${yamlCategory.name}" to ${yamlCategory.hidden || false}`);
+                            try {
+                                await api.updateCategory(category.id, { hidden: yamlCategory.hidden || false });
+                            } catch (e: any) {
+                                console.error(`  Error updating category "${yamlCategory.name}": ${e.message}`);
+                            }
+                        }
                     }
                 }
             }
         }
-
 
         console.log('Syncing changes...');
         await api.sync();
@@ -151,6 +172,7 @@ export class CategoryImporter {
                 localGroup = {
                     name: serverGroup.name,
                     is_income: serverGroup.is_income || false,
+                    hidden: serverGroup.hidden || false,
                     categories: []
                 };
                 yamlData.groups.push(localGroup);
@@ -163,8 +185,18 @@ export class CategoryImporter {
                     const localCat = localGroup.categories.find(c => c.name === serverCat.name);
                     if (!localCat) {
                         console.log(`  Found new category on server: "${serverCat.name}" (in group "${serverGroup.name}"). Adding to local YAML.`);
-                        localGroup.categories.push({ name: serverCat.name });
+                        localGroup.categories.push({
+                            name: serverCat.name,
+                            hidden: serverCat.hidden || false
+                        });
                         changesMade = true;
+                    } else {
+                        // Update local YAML if hidden status differs on server
+                        if ((localCat.hidden || false) !== (serverCat.hidden || false)) {
+                            console.log(`  Start hidden status mismatch for category "${serverCat.name}". Local: ${localCat.hidden}, Server: ${serverCat.hidden}. Updating local YAML.`);
+                            localCat.hidden = serverCat.hidden || false;
+                            changesMade = true;
+                        }
                     }
                 }
             }

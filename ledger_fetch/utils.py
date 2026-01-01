@@ -216,18 +216,31 @@ class CSVWriter:
 
         filepath = self.output_dir / filename
         
-        # Collect all fields present in the data
+        # 1. Collect all potential keys
         all_keys = set().union(*(d.keys() for d in transactions))
         
+        # 2. Identify keys that have at least one non-empty value
+        active_keys = set()
+        for key in all_keys:
+            for d in transactions:
+                val = d.get(key)
+                if val is not None:
+                     s_val = str(val).strip()
+                     if s_val != "" and s_val.lower() != "nan":
+                        active_keys.add(key)
+                        break
+        
+        # 3. Filter fieldnames to only include active keys
         if fieldnames:
-             # Use provided fieldnames + any extra keys found in data
-             final_fieldnames = list(fieldnames) + [k for k in all_keys if k not in fieldnames]
+             # Use provided fieldnames if they are active + any extra active keys
+             final_fieldnames = [k for k in fieldnames if k in active_keys] + \
+                                [k for k in all_keys if k not in fieldnames and k in active_keys]
         else:
-             # Just sort them for stability
-             final_fieldnames = sorted(list(all_keys))
+             # Just sort active keys
+             final_fieldnames = sorted(list(active_keys))
         
         with open(filepath, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=final_fieldnames)
+            writer = csv.DictWriter(f, fieldnames=final_fieldnames, extrasaction='ignore')
             writer.writeheader()
             writer.writerows(transactions)
         
