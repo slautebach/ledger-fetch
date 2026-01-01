@@ -21,7 +21,7 @@
  *    - Creates a manual balance adjustment transaction if there is a discrepancy to set the initial balance correctly.
  *
  * Usage:
- *   npx ts-node import-transactions.ts [--config-dir <path>] [--transactions-dir <path>] [--bank <bank_name>]
+ *   npx ts-node import-transactions.ts [--config-dir <path>] [--transactions-dir <path>] [--bank <bank_name>] [--since <YYYY-MM-DD>]
  */
 import * as api from '@actual-app/api';
 import * as fs from 'fs';
@@ -115,6 +115,11 @@ const argv = yargs(hideBin(process.argv))
     alias: 'b',
     type: 'string',
     description: 'Specific bank directory to process'
+  })
+  .option('since', {
+    alias: 'date',
+    type: 'string',
+    description: 'Import transactions on or after this date (YYYY-MM-DD)'
   })
   .parseSync();
 
@@ -328,6 +333,15 @@ async function main() {
         // Skip pending transactions
         if (tx['Pending'] === 'True' || tx['Pending'] === 'true') {
           continue;
+        }
+
+        // Filter by date if --since argument is provided
+        if (argv.since) {
+          const txDate = tx['Date'].substring(0, 10);
+          if (txDate < (argv.since as string)) {
+            // console.log(`      Skipping transaction from ${txDate} (before ${argv.since})`);
+            continue;
+          }
         }
 
         const accountId = tx['Unique Account ID'];

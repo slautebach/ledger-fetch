@@ -428,12 +428,7 @@ class CanadianTireDownloader(BankDownloader):
                 
             # IDs
             ref_num = txn_data.get('referenceNumber', '')
-            if ref_num:
-                txid_merchant = merchant.replace(' ', '_').replace('#', '').replace('/', '').replace('(', '').replace(')', '')
-                # Concatenate reference number and merchant to ensure uniqueness ID for shared refs
-                unique_trans_id = f"{ref_num}-{txid_merchant}"
-            else:
-                unique_trans_id = TransactionNormalizer.generate_transaction_id(date, amount, description, "CTFS")
+            unique_trans_id = TransactionNormalizer.generate_transaction_id(date, amount, description, "CTFS")
 
             trans_type = txn_data.get('type', '')
             
@@ -452,7 +447,7 @@ class CanadianTireDownloader(BankDownloader):
             txn.payee_name = payee_name # Normalized payee
             txn.amount = amount
             txn.currency = 'CAD'
-            #txn.is_transfer = is_transfer
+            txn.is_transfer = is_transfer
             txn.notes = f"Type: {trans_type}, Ref: {ref_num}"
             
             transactions.append(txn)
