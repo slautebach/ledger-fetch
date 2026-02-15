@@ -1,0 +1,8 @@
+playwright
+pandas
+pydantic-settings
+pyyaml
+ws-api
+pdfplumber
+monopoly-core
+python-dotenv
