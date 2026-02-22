@@ -153,6 +153,11 @@ def main():
         action="store_true",
         help="Enable debug mode (HAR recording, verbose logging, pause on error)"
     )
+    parser.add_argument(
+        "--since",
+        type=str,
+        help="Fetch transactions from the first of this month onwards (YYYY-MM)"
+    )
     
     args = parser.parse_args()
     
@@ -170,6 +175,23 @@ def main():
         settings.browser.headless = True
     if args.debug:
         settings.ledger_fetch.debug = True
+    if args.since:
+        settings.ledger_fetch.since_month = args.since
+        
+    if settings.ledger_fetch.since_month:
+        from datetime import datetime
+        try:
+            target_date = datetime.strptime(settings.ledger_fetch.since_month, "%Y-%m")
+            delta = datetime.now() - target_date
+            days_to_fetch = max(1, delta.days + 5)
+            for b in BANKS.keys():
+                if b not in settings.ledger_fetch.banks:
+                    from ledger_fetch.config import BankConfig
+                    settings.ledger_fetch.banks[b] = BankConfig()
+                settings.ledger_fetch.banks[b].days_to_fetch = days_to_fetch
+        except ValueError as e:
+            print(f"Error parsing since_month configuration. Must be YYYY-MM. {e}")
+            return
 
     print(f"Starting Ledger Fetch...")
     print(f"Output directory: {settings.ledger_fetch.transactions_path.resolve()}")

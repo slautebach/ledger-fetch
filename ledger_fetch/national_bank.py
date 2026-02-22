@@ -195,8 +195,9 @@ class NationalBankDownloader(BankDownloader):
         
         # Determine days to fetch
         days_to_fetch = 365 # Default fallback
-        if self.config.national_bank:
-             days_to_fetch = self.config.national_bank.days_to_fetch
+        bank_config = self.config.ledger_fetch.banks.get(self.get_bank_name())
+        if bank_config:
+             days_to_fetch = getattr(bank_config, 'days_to_fetch', 365)
         
         logger.info(f"Fetching transactions for the last {days_to_fetch} days")
         
@@ -344,7 +345,8 @@ class NationalBankDownloader(BankDownloader):
                         amount = abs(amount)
                         
                     # Handle invert_credit_transactions config
-                    if self.config.national_bank and self.config.national_bank.invert_credit_transactions:
+                    bank_config = self.config.ledger_fetch.banks.get(self.get_bank_name())
+                    if bank_config and getattr(bank_config, 'invert_credit_transactions', False):
                          amount = -amount
                         
                     # Normalize description and payee

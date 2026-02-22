@@ -264,7 +264,8 @@ class CanadianTireDownloader(BankDownloader):
             print("No statement dates found via scraping.")
 
         # Extrapolate dates based on config
-        days = self.config.canadiantire.days_to_fetch
+        bank_config = self.config.ledger_fetch.banks.get(self.get_bank_name())
+        days = getattr(bank_config, 'days_to_fetch', 365) if bank_config else 365
         
         # 1. Find the latest date to start from
         latest_date_str = None
@@ -296,7 +297,7 @@ class CanadianTireDownloader(BankDownloader):
         else:
              print("Could not find a valid date to start extrapolation.")
              
-        if self.config.debug:
+        if getattr(self.config.ledger_fetch, 'debug', False):
             print(f"DEBUG: latest_date_str: {latest_date_str}")
             print(f"DEBUG: statement_dates: {statement_dates}")
 
@@ -316,6 +317,15 @@ class CanadianTireDownloader(BankDownloader):
         if not transient_ref:
             print("No transient reference for account.")
             return []
+
+        # Fetch recent (UNSTATEMENTED) transactions first
+        print("Fetching recent (UNSTATEMENTED) transactions...")
+        recent_txns = self._fetch_transactions_for_statement("", transient_ref, target_account, category="UNSTATEMENTED")
+        if recent_txns:
+            print(f"  -> Successfully fetched {len(recent_txns)} recent transactions.")
+            api_transactions.extend(recent_txns)
+        else:
+            print("  -> No recent transactions found or fetch failed.")
 
         for date in statement_dates:
             # Implement a sweep around the calculate date
@@ -377,8 +387,7 @@ class CanadianTireDownloader(BankDownloader):
             pdf_files = self.download_statements(target_account)
             
             # Fallback: Scan directory for ALL PDFs to ensure we don't miss any 
-            # (e.g. if the website dropdown didn't load older years but we have them on disk)
-            stmt_dir = self.config.transactions_path / "canadiantire" / "statements"
+            stmt_dir = self.config.ledger_fetch.transactions_path / "canadiantire" / "statements"
             
             if stmt_dir.exists():
                 local_pdfs = list(stmt_dir.glob("Statement_*.pdf"))
@@ -472,7 +481,7 @@ class CanadianTireDownloader(BankDownloader):
         import os
         
         # Ensure directory exists
-        stmt_dir = self.config.transactions_path / "canadiantire" / "statements"
+        stmt_dir = self.config.ledger_fetch.transactions_path / "canadiantire" / "statements"
         stmt_dir.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -597,10 +606,10 @@ class CanadianTireDownloader(BankDownloader):
             print(f"Error scraping statement dates: {e}")
             return []
 
-    def _fetch_transactions_for_statement(self, statement_date, transient_ref, account: Account) -> List[Transaction]:
-        """Fetch transactions for a specific date."""
+    def _fetch_transactions_for_statement(self, statement_date: str, transient_ref: str, account: Account, category: str = "STATEMENTED") -> List[Transaction]:
+        """Fetch transactions for a specific date or category."""
         api_url = "https://www.ctfs.com/dash/v1/account/retrieveTransactions"
-        print(f"Fetching transactions for {statement_date}")
+        print(f"Fetching transactions for {statement_date or 'current'} ({category})")
         
         try:
             # Get CSRF token
@@ -617,7 +626,7 @@ class CanadianTireDownloader(BankDownloader):
             csrf_token = csrf_info.get("csrftoken", "")
             
             post_data = {
-                "category": "STATEMENTED",
+                "category": category,
                 "statementDate": statement_date,
                 "transientReference": transient_ref
             }

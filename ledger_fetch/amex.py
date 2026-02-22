@@ -183,7 +183,8 @@ class AmexDownloader(BankDownloader):
         print("Fetching transactions via API...")
         
         # Calculate date range
-        days = self.config.amex.days_to_fetch
+        bank_config = self.config.ledger_fetch.banks.get(self.get_bank_name())
+        days = getattr(bank_config, 'days_to_fetch', 365) if bank_config else 365
         print(f"Fetch configuration: days_to_fetch={days}")
         
         end_date = self.datetime.now()
@@ -201,8 +202,8 @@ class AmexDownloader(BankDownloader):
             return transactions
         except Exception as e:
             print(f"Error fetching transactions: {e}")
-            if self.config.debug:
-                self.page.screenshot(path=self.config.transactions_path / "amex_error.png")
+            if getattr(self.config.ledger_fetch, 'debug', False):
+                self.page.screenshot(path=self.config.ledger_fetch.transactions_path / "amex_error.png")
             return []
 
     def _fetch_transactions_api(self, start_date: str, end_date: str) -> Dict[str, Any]:

@@ -197,6 +197,12 @@ class BankDownloader(ABC):
         
         # Deduplicate based on unique_transaction_id to handle overlapping downloads
         # (e.g. "Recent Activity" vs "Monthly Statement" often contain the same transactions)
+        # Apply --since filter if configured
+        since_month = getattr(self.config.ledger_fetch, 'since_month', None)
+        if since_month:
+            print(f"DEBUG: Filtering transactions since {since_month:7}...")
+            transactions = [t for t in transactions if t.date and str(t.date)[:7] >= since_month]
+
         unique_txns = {}
         print(f"DEBUG: Starting deduplication on {len(transactions)} transactions...")
         duplicate_count = 0
@@ -212,6 +218,9 @@ class BankDownloader(ABC):
         
         print(f"DEBUG: Deduplication complete. Removed {duplicate_count} duplicates. Final count: {len(unique_txns)}")
         transactions = list(unique_txns.values())
+        
+        # Sort transactions by date descending globally so the CSV starts with the newest overall transaction
+        transactions.sort(key=lambda t: (t.date or ""), reverse=True)
 
         writer = CSVWriter(self.config.ledger_fetch.transactions_path / self.get_bank_name())
         

@@ -264,7 +264,9 @@ class CIBCDownloader(BankDownloader):
         transactions = []
         
         # Calculate months to fetch based on config
-        months_to_fetch = (self.config.cibc.days_to_fetch // 30) + 1 # Approximate
+        bank_config = self.config.ledger_fetch.banks.get(self.get_bank_name())
+        days_to_fetch = getattr(bank_config, 'days_to_fetch', 365) if bank_config else 365
+        months_to_fetch = (days_to_fetch // 30) + 1 # Approximate
         
         # Iterate over the past months
         for i in range(months_to_fetch):

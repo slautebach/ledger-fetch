@@ -652,8 +652,9 @@ class RBCDownloader(BankDownloader):
             payee_name = TransactionNormalizer.normalize_payee(description)
             
             # ID
-            txn_id = raw.get('id')
-            unique_trans_id = txn_id if txn_id else TransactionNormalizer.generate_transaction_id(date, amount, description, account.unique_account_id)
+            # Ensure deterministic IDs by generating from core fields. 
+            # The RBC API returns IDs that change on every request for some accounts (e.g., base64 UUIDs).
+            unique_trans_id = TransactionNormalizer.generate_transaction_id(date, amount, description, account.unique_account_id)
             
             # Create Transaction
             txn = Transaction(raw, account.unique_account_id)

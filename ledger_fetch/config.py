@@ -57,6 +57,10 @@ class LedgerFetchConfig(BaseModel):
         default=False,
         description="Enable debug mode"
     )
+    since_month: Optional[str] = Field(
+        default=None,
+        description="Optional month to fetch transactions from (YYYY-MM)"
+    )
     banks: Dict[str, BankConfig] = Field(default_factory=dict)
 
     # Allow arbitrary bank keys if they match BankConfig structure, 

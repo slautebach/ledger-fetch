@@ -1,6 +1,7 @@
 # Config
 
 - create a config.template folder
+- create a script to initialize the config based on the template
 
 # Sorting of Yaml Config Files
 

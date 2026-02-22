@@ -42,7 +42,7 @@ class BMODownloader(BankDownloader):
         """
         print("Navigating to BMO login page...")
         # Forward console logs to Python stdout for debugging
-        if self.config.debug:
+        if getattr(self.config.ledger_fetch, 'debug', False):
             self.page.on("console", lambda msg: print(f"BROWSER CONSOLE: {msg.text}"))
         
         self.page.goto("https://www1.bmo.com/banking/digital/login?lang=en")
@@ -163,7 +163,9 @@ class BMODownloader(BankDownloader):
                 current_date = datetime.now()
                 current_year = current_date.year
                 
-                years_to_fetch = (self.config.bmo.days_to_fetch // 365) + 1
+                bank_config = self.config.ledger_fetch.banks.get(self.get_bank_name())
+                days_to_fetch = getattr(bank_config, 'days_to_fetch', 365) if bank_config else 365
+                years_to_fetch = (days_to_fetch // 365) + 1
                 
                 for i in range(years_to_fetch):
                     target_year = current_year - i
@@ -366,7 +368,7 @@ class BMODownloader(BankDownloader):
                 }
             }
             
-            if self.config.debug:
+            if getattr(self.config.ledger_fetch, 'debug', False):
                 print(f"DEBUG: API Request Payload for {from_date} to {to_date}:")
                 print(json.dumps(post_data, indent=2))
 
@@ -454,7 +456,7 @@ class BMODownloader(BankDownloader):
             
             if "error" in result:
                 print(f"API fetch error: {result['error']}")
-                if self.config.debug:
+                if getattr(self.config.ledger_fetch, 'debug', False):
                     print("!"*60)
                     print("API EXECUTION ERROR")
                     print("The JavaScript code failed to execute properly.")
@@ -465,7 +467,7 @@ class BMODownloader(BankDownloader):
                 
             if not result.get("ok"):
                 print(f"API error status: {result.get('status')}")
-                if self.config.debug:
+                if getattr(self.config.ledger_fetch, 'debug', False):
                     print(f"Response text preview: {result.get('text', '')[:1000]}")
                     print("!"*60)
                     print("API REQUEST FAILED (Non-200 Status)")

@@ -403,10 +403,8 @@ async function main() {
       // Group by Account ID
       const transactionsByAccount: Record<string, CsvTransaction[]> = {};
       for (const tx of transactions) {
-        // Skip pending transactions
-        if (tx['Pending'] === 'True' || tx['Pending'] === 'true') {
-          continue;
-        }
+        // Removed skipping of pending transactions
+
 
         // Filter by date if --since argument is provided
         if (argv.since) {
@@ -490,7 +488,25 @@ async function main() {
         // Prepare Transactions
         const isInvestment = accountBalances.get(accountId)?.type?.toLowerCase().includes('investment');
 
-        const actualTransactions: ActualTransaction[] = txs.map(tx => {
+        let existingTransactions: any[] = [];
+        try {
+          // Fetch existing transactions to match against
+          const earliestDateStr = earliestTransactionDates.get(accountId) || '2000-01-01';
+          existingTransactions = await api.getTransactions(actualAccount.id, earliestDateStr, '2100-01-01');
+        } catch (e: any) {
+          console.warn(`    Warning: Could not fetch existing transactions: ${e.message}`);
+        }
+
+        const existingTxMap = new Map();
+        for (const t of existingTransactions) {
+          if (t.imported_id) {
+            existingTxMap.set(t.imported_id, t);
+          }
+        }
+
+        const actualTransactions: ActualTransaction[] = [];
+
+        for (const tx of txs) {
           // Payee: Use 'Payee' or 'Payee Name' if available, else 'Description'
           const payee = tx['Payee Name'] || tx['Payee'] || tx['Description'];
 
@@ -518,34 +534,73 @@ async function main() {
             notes = notes ? `${notes} (Transfer)` : '(Transfer)';
           }
 
-
-
-
           let importTxId = tx['Unique Transaction ID']?.trim();
           if (!importTxId) {
             console.warn(`    No Unique Transaction ID found for transaction. Generating deterministic ID based on content.`);
-            // Generate a deterministic ID based on date, amount, payee, and account
-            // This ensures that importing the same file again produces the same IDs
             const idString = `${dateStr}:${amount}:${payee}:${actualAccount.id}`;
             importTxId = crypto.createHash('md5').update(idString).digest('hex');
           }
-          return {
-            date: dateStr,
-            amount: amount,
-            payee_name: payee,
-            imported_id: importTxId,
-            notes: notes,
-            cleared: true,
-            account: actualAccount.id,
-            transfer_id: tx['Transfer Id'] || undefined
-          };
-        });
+
+          const isPending = (tx['Pending'] === 'True' || tx['Pending'] === 'true');
+          const existingTx = existingTxMap.get(importTxId);
+
+          if (existingTx) {
+            if (isPending) {
+              // Existing transaction is still pending in our CSV. Skip it to avoid unnecessary updates.
+              continue;
+            } else {
+              // CSV transaction is no longer pending. Did it use to be pending?
+              const existingNotes = existingTx.notes || '';
+              const wasPending = existingNotes.includes('#pending') || existingNotes.toLowerCase().startsWith('pending:');
+
+              if (wasPending) {
+                console.log(`      [DEBUG] Transaction posted: ${payee} (${dateStr})`);
+                let cleanedNotes = existingNotes.replace(/^Pending:\s*/i, '').replace(/\s*#pending/gi, '').trim();
+                actualTransactions.push({
+                  date: dateStr,
+                  amount: amount,
+                  payee_name: payee,
+                  imported_id: importTxId,
+                  notes: cleanedNotes,
+                  cleared: true,
+                  account: actualAccount.id,
+                  transfer_id: tx['Transfer Id'] || undefined
+                });
+              } else {
+                // Was already posted. Skip to avoid rewriting it.
+                continue;
+              }
+            }
+          } else {
+            // New transaction
+            let finalNotes = notes;
+            if (isPending) {
+              finalNotes = `Pending: ${notes} #pending`;
+            }
+            actualTransactions.push({
+              date: dateStr,
+              amount: amount,
+              payee_name: payee,
+              imported_id: importTxId,
+              notes: finalNotes,
+              cleared: !isPending,
+              account: actualAccount.id,
+              transfer_id: tx['Transfer Id'] || undefined
+            });
+          }
+        }
 
         console.log(`    Importing ${actualTransactions.length} transactions for account "${actualAccount.name}"...`);
-        console.log(`    Importing ${actualTransactions.length} transactions for account "${actualAccount.name}"...`);
+        if (actualTransactions.length > 0) {
+          const dates = actualTransactions.map(t => t.date).sort();
+          console.log(`      [DEBUG] Date range to import: ${dates[0]} to ${dates[dates.length - 1]}`);
+        }
         try {
           const result = await api.importTransactions(actualAccount.id, actualTransactions);
           console.log(`      Added: ${result.added.length}, Updated: ${result.updated.length}, Errors: ${result.errors ? result.errors.length : 0}`);
+          if (result.errors && result.errors.length > 0) {
+            console.log(`      [DEBUG] Import Errors: ${JSON.stringify(result.errors)}`);
+          }
         } catch (e: any) {
           console.error(`      Error importing transactions: ${e.message}`);
         }
