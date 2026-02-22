@@ -3,7 +3,7 @@ import * as path from 'path';
 import yargs from 'yargs/yargs';
 import { hideBin } from 'yargs/helpers';
 import { Config, loadConfig, initActual, shutdownActual } from './utils';
-import { loadTagConfig, matchesRule, TagConfig, TagRule, escapeRegex, addTags, sortTagConfig, saveTagConfig } from './tag-utils';
+import { loadTagConfig, matchesRule, TagConfig, TagRule, escapeRegex, addTags, removeTag, sortTagConfig, saveTagConfig } from './tag-utils';
 
 // --- Interfaces ---
 
@@ -19,6 +19,7 @@ interface TransactionUpdate {
     category_name?: string; // Resolved name
     account_off_budget: boolean;
     added_tags: string[];
+    removed_tags: string[];
 }
 
 // --- Logic ---
@@ -48,6 +49,10 @@ const argv = yargs(hideBin(process.argv))
         type: 'boolean',
         description: 'List transactions that do not have a category',
         default: false
+    })
+    .option('remove-tag', {
+        type: 'string',
+        description: 'Remove a specific tag from all transactions'
     })
     .parseSync();
 console.log('DEBUG: parsed argv:', argv);
@@ -82,21 +87,24 @@ async function main() {
     } catch (e: any) {
         console.error(e.message);
         process.exit(1);
-        process.exit(1);
     }
 
-    // 1.5 Handle Sort Command
+    // 1.5 Always Sort and Update Config
+    // This ensures that the tags file is always strictly ordered by name and rules
+    const sortedConfig = sortTagConfig(tagConfig);
+    try {
+        saveTagConfig(argv['config-file'], sortedConfig);
+        // console.log(`Sorted and saved configuration: ${argv['config-file']}`);
+    } catch (e: any) {
+        console.error(`Failed to save sorted configuration: ${e.message}`);
+        // We don't exit here, as we can still process with the loaded (and sorted in memory) config
+        // but it's worth noting the file wasn't updated.
+    }
+
+    // If only sorting was requested, exit now
     if (argv.sort) {
-        console.log('Sorting tags configuration...');
-        const sortedConfig = sortTagConfig(tagConfig);
-        try {
-            saveTagConfig(argv['config-file'], sortedConfig);
-            console.log(`Successfully sorted configuration: ${argv['config-file']}`);
-        } catch (e: any) {
-            console.error(`Failed to save sorted configuration: ${e.message}`);
-            process.exit(1);
-        }
-        return; // Exit after sorting
+        console.log(`Successfully yielded sorted configuration: ${argv['config-file']}`);
+        return;
     }
 
     // 2. Connect to Actual
@@ -197,60 +205,103 @@ async function main() {
         return;
     }
 
-    // 5. Apply Rules
+    // 5. Apply Rules OR Remove Tag
     let updates: TransactionUpdate[] = [];
 
-    for (const tx of allTransactions) {
-        // Resolve names
-        const accountName = accountMap.get(tx.account) || 'Unknown Account';
-        const payeeName = payeeMap.get(tx.payee) || ''; // Transfer payees might be null or have special handling?
-        const categoryName = categoryMap.get(tx.category) || '';
-        // Note: Transfers have payee field as null usually and transfer_id set. 
-        // We can potentially match on transfer payee names if we resolve them via transfer_id but keep it simple for now.
+    if (argv['remove-tag']) {
+        console.log(`\nRemoving tag "${argv['remove-tag']}" from transactions...`);
+        const tagToRemove = argv['remove-tag'];
 
-        if (tx.is_parent) {
-            // Handle split transactions? 
-            // Usually we tag the parent or the subtransactions?
-            // If we tag the parent notes, it applies to the whole.
-            // Let's focus on non-split or parent for now.
+        for (const tx of allTransactions) {
+            const accountName = accountMap.get(tx.account) || 'Unknown Account';
+            const payeeName = payeeMap.get(tx.payee) || '';
+            const categoryName = categoryMap.get(tx.category) || '';
+
+            let currentNotes = tx.notes || '';
+            const originalNotes = currentNotes;
+
+            // Only attempt removal if the tag might be there (simple check first)
+            // We can use a regex similar to removeTag to be sure we don't skip normalization?
+            // Actually, if we want to ONLY remove the tag and NOT normalize others if tag isn't there:
+            // We should check if removeTag actually removed it.
+            // But removeTag normalizes anyway.
+            // So if we only want updates when the tag IS removed:
+            const tagRegex = new RegExp(`#${escapeRegex(tagToRemove.replace(/^#/, ''))}\\b`, 'i');
+            if (tagRegex.test(currentNotes)) {
+                currentNotes = removeTag(currentNotes, tagToRemove);
+            }
+
+            if (currentNotes !== originalNotes) {
+                updates.push({
+                    id: tx.id,
+                    date: tx.date,
+                    payee: tx.payee,
+                    payee_name: payeeName,
+                    account_name: accountName,
+                    category_name: categoryName,
+                    original_notes: tx.notes,
+                    new_notes: currentNotes,
+                    account_off_budget: accountOffBudgetMap.get(tx.account) || false,
+                    added_tags: [], // No added tags
+                    removed_tags: [tagToRemove]
+                });
+            }
         }
+    } else {
+        // Normal Tagging Mode
+        for (const tx of allTransactions) {
+            // Resolve names
+            const accountName = accountMap.get(tx.account) || 'Unknown Account';
+            const payeeName = payeeMap.get(tx.payee) || ''; // Transfer payees might be null or have special handling?
+            const categoryName = categoryMap.get(tx.category) || '';
+            // Note: Transfers have payee field as null usually and transfer_id set. 
+            // We can potentially match on transfer payee names if we resolve them via transfer_id but keep it simple for now.
 
-        let currentNotes = tx.notes || '';
-        const originalNotes = currentNotes;
-        const addedTags: string[] = [];
+            if (tx.is_parent) {
+                // Handle split transactions? 
+                // Usually we tag the parent or the subtransactions?
+                // If we tag the parent notes, it applies to the whole.
+                // Let's focus on non-split or parent for now.
+            }
 
-        for (const rule of tagConfig.rules) {
-            if (matchesRule(tx, rule, payeeName, accountName, categoryName)) {
-                for (const tag of rule.tags) {
-                    const previousNotes = currentNotes;
-                    currentNotes = addTags(currentNotes, [tag]);
+            let currentNotes = tx.notes || '';
+            const originalNotes = currentNotes;
+            const addedTags: string[] = [];
 
-                    // simple check to see if we should report it as "added"
-                    // This isn't perfect if addTag only re-sorted, but it's close enough for reporting
-                    // unless we check existence beforehand. 
-                    // Let's check existence beforehand to be accurate about "added" vs "sorted"
-                    // actually, addTag handles the check.
-                    // Let's just track that we matched this rule.
-                    if (!previousNotes.includes(tag) && currentNotes.includes(tag)) {
-                        addedTags.push(tag);
+            for (const rule of tagConfig.rules) {
+                if (matchesRule(tx, rule, payeeName, accountName, categoryName)) {
+                    for (const tag of rule.tags) {
+                        const previousNotes = currentNotes;
+                        currentNotes = addTags(currentNotes, [tag]);
+
+                        // simple check to see if we should report it as "added"
+                        // This isn't perfect if addTag only re-sorted, but it's close enough for reporting
+                        // unless we check existence beforehand. 
+                        // Let's check existence beforehand to be accurate about "added" vs "sorted"
+                        // actually, addTag handles the check.
+                        // Let's just track that we matched this rule.
+                        if (!previousNotes.includes(tag) && currentNotes.includes(tag)) {
+                            addedTags.push(tag);
+                        }
                     }
                 }
             }
-        }
 
-        if (currentNotes !== originalNotes) {
-            updates.push({
-                id: tx.id,
-                date: tx.date,
-                payee: tx.payee,
-                payee_name: payeeName,
-                account_name: accountName,
-                category_name: categoryName,
-                original_notes: tx.notes,
-                new_notes: currentNotes,
-                account_off_budget: accountOffBudgetMap.get(tx.account) || false,
-                added_tags: addedTags
-            });
+            if (currentNotes !== originalNotes) {
+                updates.push({
+                    id: tx.id,
+                    date: tx.date,
+                    payee: tx.payee,
+                    payee_name: payeeName,
+                    account_name: accountName,
+                    category_name: categoryName,
+                    original_notes: tx.notes,
+                    new_notes: currentNotes,
+                    account_off_budget: accountOffBudgetMap.get(tx.account) || false,
+                    added_tags: addedTags,
+                    removed_tags: []
+                });
+            }
         }
     }
 
@@ -280,25 +331,29 @@ async function main() {
         let updateCount = 0;
         console.log(`\nFound ${updates.length} transactions to update:`);
         for (const update of updates) {
-            console.log(`  Transaction: ${updateCount}/${updates.length}: [${update.date}] ${update.payee_name} (${update.account_name}) [${update.category_name || 'No Category'}]`);
-            console.log(`    + Tags: ${update.added_tags.join(', ')}`);
-            // console.log(`    New Note: "${update.new_notes}"`);
+            console.log(`  Transaction: ${updateCount + 1}/${updates.length}: [${update.date}] ${update.payee_name} (${update.account_name}) [${update.category_name || 'No Category'}]`);
 
-            if (argv.commit) {
-                await api.updateTransaction(update.id, { notes: update.new_notes });
+            const existingTagsList = (update.original_notes?.match(/#[\w-]+/g) || []).map(t => t.toLowerCase());
+            const newTagsList = (update.new_notes?.match(/#[\w-]+/g) || []).map(t => t.toLowerCase());
 
-                // Batch sync every 50 updates to prevent network timeouts
-                updateCount++;
-                if (updateCount % 15 === 0) {
-                    await manualSync();
-                }
-            }
+            console.log(`    = Existing tags: ${existingTagsList.join(', ')}`);
+            if (update.added_tags.length > 0) console.log(`    + Tags: ${update.added_tags.join(', ')}`);
+            if (update.removed_tags.length > 0) console.log(`    - Tags: ${update.removed_tags.join(', ')}`);
+            console.log(`    $ New Tags: ${newTagsList.join(', ')}`);
+            updateCount++;
         }
 
         if (argv.commit) {
-            // Final sync after all updates
-            await manualSync();
+            console.log(`\nCommitting ${updates.length} updates to Actual Budget...`);
+            await api.batchBudgetUpdates(async () => {
+                let updateCount = 0;
+                for (const update of updates) {
+                    await api.updateTransaction(update.id, { notes: update.new_notes });
+                    updateCount++;
+                }
+            });
             console.log(`\nSUCCESS: Updated ${updates.length} transactions.`);
+            await api.sync();
         } else {
             console.log(`\nDry run complete. Use --commit to apply changes.`);
         }
@@ -311,24 +366,7 @@ async function main() {
 
 
 
-async function manualSync() {
-    console.log('Syncing...');
-    const maxRetries = 3;
-    for (let i = 0; i < maxRetries; i++) {
-        try {
-            await api.sync();
-            return;
-        } catch (e: any) {
-            if (i === maxRetries - 1) {
-                console.error(`Sync failed after ${maxRetries} attempts: ${e.message}`);
-                throw e;
-            }
-            const waitTime = 2000 * (2 ** i);
-            console.warn(`Sync failed (attempt ${i + 1}/${maxRetries}), retrying in ${waitTime / 1000}s...`);
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-        }
-    }
-}
+
 
 if (require.main === module) {
     main().catch(err => {

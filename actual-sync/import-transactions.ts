@@ -518,20 +518,7 @@ async function main() {
             notes = notes ? `${notes} (Transfer)` : '(Transfer)';
           }
 
-          // Apply Tagging Rules
-          if (tagConfig) {
-            for (const rule of tagConfig.rules) {
-              // Note: Category is not yet assigned, so we pass empty string
-              if (matchesRule({ notes: notes, amount: amount }, rule, payee, actualAccount.name, "")) {
-                for (const tag of rule.tags) {
-                  const tagRegex = new RegExp(`(?<=^|\\s)${escapeRegex(tag)}(?=$|\\s)`, 'i');
-                  if (!tagRegex.test(notes)) {
-                    notes = (notes + ' ' + tag).trim();
-                  }
-                }
-              }
-            }
-          }
+
 
 
           let importTxId = tx['Unique Transaction ID']?.trim();
@@ -565,6 +552,94 @@ async function main() {
       }
     }
     console.log(`    Syncing transactions for bank ${bankName}...`);
+    await api.sync();
+  }
+
+  // Phase 2.5: Post-Import Tagging
+  // Now that transactions are imported and (potentially) matched to existing payees/categories,
+  // we run the tagging rules again to ensure everything is caught.
+  if (tagConfig) {
+    console.log('\n--- Phase 2.5: Post-Import Tagging ---');
+
+    // Determine lookback window. If --since is set, use that. 
+    // Otherwise, use a safe default (e.g. 30 days ago) or ideally the earliest date we touched.
+    // let's use the earliestTransactionDates map we built.
+
+    // We need to process by account
+
+    // Refresh cache one last time to be sure
+    accountsCache = await api.getAccounts(); // definitions might have changed if we created new ones? (actually we did in phase 1)
+
+    for (const [accountId, earliestDate] of earliestTransactionDates) {
+      // Resolve Actual Account ID
+      let actualAccountId = accountMap[accountId];
+      if (!actualAccountId) {
+        // Try name...
+        const balanceInfo = accountBalances.get(accountId);
+        if (balanceInfo) {
+          const acc = accountsCache.find((a: any) => a.name === balanceInfo.name || a.name === accountId);
+          if (acc) actualAccountId = acc.id;
+        }
+      }
+
+      if (!actualAccountId) continue;
+
+      const actualAccount = accountsCache.find((a: any) => a.id === actualAccountId);
+      if (!actualAccount) continue;
+
+      console.log(`  Running tagging rules for account "${actualAccount.name}" (since ${earliestDate})...`);
+
+      const transactions = await api.getTransactions(actualAccountId, earliestDate, '2100-01-01');
+
+      const updates: any[] = [];
+
+      // Pre-fetch Payees and Categories for resolution
+      const payees = await api.getPayees();
+      const payeeMap = new Map<string, string>();
+      payees.forEach((p: any) => payeeMap.set(p.id, p.name));
+
+      const categories = await api.getCategories();
+      const categoryMap = new Map<string, string>();
+      categories.forEach((c: any) => categoryMap.set(c.id, c.name));
+
+      for (const tx of transactions) {
+        const payeeName = payeeMap.get(tx.payee || '') || ''; // ID -> Name
+        const categoryName = categoryMap.get(tx.category || '') || ''; // ID -> Name
+        const accountName = actualAccount.name;
+
+        let currentNotes = tx.notes || '';
+        const originalNotes = currentNotes;
+
+        for (const rule of tagConfig.rules) {
+          // Using 'tx.amount' (integer cents) directly
+          if (matchesRule({ ...tx, amount: tx.amount }, rule, payeeName || '', String(accountName || ''), categoryName || '')) {
+            for (const tag of rule.tags) {
+              // Helper to add tag safely
+              const tagRegex = new RegExp(`(?<=^|\\s)${escapeRegex(tag)}(?=$|\\s)`, 'i');
+              if (!tagRegex.test(currentNotes)) {
+                currentNotes = (currentNotes + ' ' + tag).trim();
+              }
+            }
+          }
+        }
+
+        if (currentNotes !== originalNotes) {
+          updates.push({
+            id: tx.id,
+            notes: currentNotes
+          });
+        }
+      }
+
+      if (updates.length > 0) {
+        console.log(`    Applying ${updates.length} tag updates...`);
+        await api.batchBudgetUpdates(async () => {
+          for (const update of updates) {
+            await api.updateTransaction(update.id, { notes: update.notes });
+          }
+        });
+      }
+    }
     await api.sync();
   }
 

@@ -1,5 +1,6 @@
 import time
 import json
+import urllib.parse
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from .base import BankDownloader
@@ -282,16 +283,24 @@ class RBCDownloader(BankDownloader):
         if days is None:
             config = self.config.ledger_fetch.banks.get("rbc")
             days = config.days_to_fetch if config else 1095
+        
+        # Use the raw 'id' (encrypted ID) from the API response if available.
+        # unique_account_id might be a constructed string (RBC-xxxx).
+        encrypted_id = account.raw_data.get('id') or account.unique_account_id
+        
+        if not encrypted_id or encrypted_id.startswith('RBC-'):
+            # Try to find encrypted ID in other fields if not found or if unique_id is our custom one
+            encrypted_id = account.raw_data.get('encryptedAccountNumber') or encrypted_id
 
-        # Use encrypted account number for API calls if available
-        encrypted_id = account.get('encryptedAccountNumber')
-            
         if not encrypted_id:
             print(f"Skipping account {account.account_name} (No encrypted account ID)")
             return []
             
+        print(f"Fetching transactions for {account.account_name} (ID: {encrypted_id[:10]}...)...")
+
         if account.type == AccountType.CREDIT_CARD:
-            return self._fetch_cc_transactions_search(account, days, encrypted_id)
+            print(f"  Skipping API fetch for {account.type} (relying on CSV fallback)")
+            return None
 
         print(f"Fetching transactions for {account.account_name} ({account.account_number})...")
         
@@ -310,9 +319,14 @@ class RBCDownloader(BankDownloader):
         print(f"Fetching PDA transactions for {account.account_name} ({account.account_number}) via search API...")
         
         all_transactions = []
-        # Base URL (try -dbb first as per HAR)
-        base_url = "https://www1.royalbank.com/sgw5/digital/transaction-presentation-service-v3-dbb/v3"
-        url = f"{base_url}/search/pda/posted/account/{encrypted_id}"
+        # Base URLs to try (in order of preference)
+        candidate_base_urls = [
+            "https://www1.royalbank.com/sgw5/digital/transaction-presentation-service-v3-dbb/v3",
+            "https://www1.royalbank.com/sgw5/digital/transaction-presentation-service-v3/v3"
+        ]
+        
+        
+        active_base_url = None
         
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
@@ -320,8 +334,8 @@ class RBCDownloader(BankDownloader):
         # Iterate in monthly chunks
         current_start = start_date
         while current_start < end_date:
-            # Define chunk end (current_start + 30 days or end_date)
-            chunk_end = min(current_start + timedelta(days=30), end_date)
+            # Define chunk end (current_start + 90 days or end_date)
+            chunk_end = min(current_start + timedelta(days=90), end_date)
             
             # Format dates for API (YYYY-MM-DD)
             str_start = current_start.strftime("%Y-%m-%d")
@@ -331,7 +345,7 @@ class RBCDownloader(BankDownloader):
             
             # Pagination for this chunk
             offset = 0
-            limit = 50
+            limit = 2000
             total_matches = None
             
             while True:
@@ -342,18 +356,61 @@ class RBCDownloader(BankDownloader):
                     "offset": offset
                 }
                 
-                try:
-                    response = self.page.request.post(url, data=payload)
-                    
-                    if response.status != 200:
-                        print(f"    Error fetching chunk (offset {offset}): {response.status} {response.status_text}")
-                        # Fallback for PDA: sometimes 404 means no transactions or wrong endpoint?
-                        # If 404, we might be wrong about the endpoint.
-                        if response.status == 404:
-                             print("    Endpoint 404. Aborting search API for this account to trigger fallback.")
-                             return None
-                        break
+                # Determine which URL to use
+                if active_base_url:
+                    urls_to_try = [active_base_url]
+                else:
+                    urls_to_try = candidate_base_urls
+                
+                response = None
+                
+                for base_url in urls_to_try:
+                    # Updated URL: URL encode encrypted_id since it's base64 and may contain +, /, =
+                    safe_id = urllib.parse.quote(encrypted_id, safe='')
+                    url = f"{base_url}/search/pda/account/{safe_id}"
+                    try:
+                        response = self.page.request.post(url, data=payload)
                         
+                        if response.status == 404:
+                            if not active_base_url:
+                                print(f"    Endpoint 404 at {base_url}. Trying next candidate...")
+                                continue # Try next URL
+                            else:
+                                # We had a working URL, but now it 404s? Weird. Treat as fatal for this chunk.
+                                break 
+                        elif response.status == 200:
+                            # Success! Lock in this URL
+                            if not active_base_url:
+                                print(f"    Success with endpoint: {base_url}")
+                                active_base_url = base_url
+                            break # Stop trying candidates
+                        else:
+                            # Other error (500 etc), stop trying candidates and handle below
+                            break
+                            
+                    except Exception as e:
+                        print(f"    Exception trying {base_url}: {e}")
+                        continue
+
+                # If we exhausted candidates without a response or all 404s
+                if not response or response.status == 404:
+                     print("    All endpoints failed (404). Aborting search API for this account to trigger fallback.")
+                     return None
+                
+                # Handle non-200 responses (other errors)
+                if response.status != 200:
+                    print(f"    Error fetching chunk (offset {offset}): {response.status} {response.status_text}")
+                    if response.status >= 500:
+                        try:
+                            body = response.text()
+                            print(f"    Server Error ({response.status}) Response Body: {body[:1000]}")
+                        except Exception:
+                            print("    Could not read response body.")
+                        print(f"    Server Error ({response.status}). Skipping this chunk.")
+                        break
+                    break
+                        
+                try:
                     data = response.json()
                     
                     # API returns 'transactionList' or 'transactions'
@@ -405,11 +462,20 @@ class RBCDownloader(BankDownloader):
         print(f"Fetching CC transactions for {account.account_name} ({account.account_number}) via search API...")
         
         all_transactions = []
+        # Base URLs to try (in order of preference)
+        # Note: CC HAR shows 'search/cc/posted/account' is the correct endpoint.
+        # keep 'search/cc/account' as fallback.
+        candidate_patterns = [
+            "search/cc/posted/account",
+            "search/cc/account"
+        ]
+        
         base_url = "https://www1.royalbank.com/sgw5/digital/transaction-presentation-service-v3-dbb/v3"
-        url = f"{base_url}/search/cc/posted/account/{encrypted_id}"
         
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
+        
+        active_pattern = None
         
         # Iterate in monthly chunks
         current_start = start_date
@@ -433,17 +499,63 @@ class RBCDownloader(BankDownloader):
                 payload = {
                     "transactionFromDate": str_start,
                     "transactionToDate": str_end,
-                    "limit": limit,
-                    "offset": offset
+                    "limit": limit
                 }
+                # CC API throws 500 if offset is passed, so we rely entirely on higher limits
+
                 
-                try:
-                    response = self.page.request.post(url, data=payload)
                     
-                    if response.status != 200:
-                        print(f"    Error fetching chunk (offset {offset}): {response.status} {response.status_text}")
-                        break
+                # Determine which URL options to use
+                if active_pattern:
+                    patterns_to_try = [active_pattern]
+                else:
+                    patterns_to_try = candidate_patterns
+                
+                response = None
+                
+                for pattern in patterns_to_try:
+                    safe_id = urllib.parse.quote(encrypted_id, safe='')
+                    url = f"{base_url}/{pattern}/{safe_id}"
+                    try:
+                        print(f"    [DEBUG] Sending Payload: {payload}")
+                        response = self.page.request.post(url, data=payload)
                         
+                        if response.status == 404:
+                            if not active_pattern:
+                                print(f"    Endpoint 404 at .../{pattern}/... Trying next candidate...")
+                                continue
+                            else:
+                                break # Active pattern failed
+                        elif response.status == 200:
+                            if not active_pattern:
+                                print(f"    Success with pattern: {pattern}")
+                                active_pattern = pattern
+                            break # Success
+                        else:
+                            break # Other error
+                            
+                    except Exception as e:
+                        print(f"    Exception trying {pattern}: {e}")
+                        continue # Try next pattern
+
+                # If we exhausted candidates without a response or all 404s
+                if not response or response.status == 404:
+                     print("    All endpoints failed (404). Aborting search API for this account to trigger fallback.")
+                     return None
+                
+                if response.status != 200:
+                    print(f"    Error fetching chunk (offset {offset}): {response.status} {response.status_text}")
+                    if response.status >= 500:
+                        try:
+                            body = response.text()
+                            print(f"    Server Error ({response.status}) Response Body: {body[:1000]}")
+                        except Exception:
+                            print("    Could not read response body.")
+                        print(f"    Server Error ({response.status}). Skipping this chunk.")
+                        break
+                    break
+
+                try:
                     data = response.json()
                     
                     # API returns 'transactionList' or 'transactions'
@@ -471,10 +583,12 @@ class RBCDownloader(BankDownloader):
                     if total_matches and (offset + count_returned >= total_matches):
                         break # Reached total matches
                         
-                    # Increment offset
-                    offset += count_returned
+                    # Incrementing offset causes 500 on CC, so we must stop here if limit is reached
+                    if count_returned >= limit:
+                        print("    Warning: Reached chunk limit. CC API does not support pagination. Some may be missed.")
+                        break
                     
-                    time.sleep(0.5) # Be nice to API
+                    time.sleep(1) # Be nice to API (increased to 1s)
                     
                 except Exception as e:
                     print(f"    Exception in pagination loop: {e}")

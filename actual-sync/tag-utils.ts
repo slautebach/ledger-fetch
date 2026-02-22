@@ -216,6 +216,50 @@ export function addTags(note: string | null | undefined, tags: string[]): string
 }
 
 /**
+ * Removes a specific tag from the notes.
+ * @param note The existing note string.
+ * @param tagToRemove The tag to remove (string, with or without #).
+ * @returns The updated note string.
+ */
+export function removeTag(note: string | null | undefined, tagToRemove: string): string {
+    if (!note) return '';
+
+    // specific tag handling: handle both with and without hash in argument
+    const tagClean = tagToRemove.startsWith('#') ? tagToRemove.substring(1) : tagToRemove;
+
+    // Regex to match #tagname ensuring word boundary so #tag doesn't match #tagtwo
+    // We use \b for word boundary, but since # is not a word character, we need to be careful.
+    // Actually, # is not a word char. So \b matches between space and #.
+    // But we want to match #tagClean followed by (space or end of string).
+    // The previous extraction regex was /#[\w-]+/g.
+    // So we should match # + tagClean + (boundary or non-word-char except dash?)
+    // Simplest is to just use cleanAndSortTags logic: extract all, filter out, rebuild.
+
+    const tagRegex = /#[\w-]+/g;
+    const tags = note.match(tagRegex) || [];
+
+    // Remove tags from body
+    let body = note.replace(tagRegex, ' ');
+    body = body.replace(/\s+/g, ' ').trim();
+
+    // Filter tags
+    const targetTagLower = tagClean.toLowerCase();
+    const uniqueTags = Array.from(new Set(tags.map(t => t.toLowerCase())))
+        .filter(t => {
+            const tClean = t.startsWith('#') ? t.substring(1) : t;
+            return tClean !== targetTagLower;
+        })
+        .sort();
+
+    if (uniqueTags.length > 0) {
+        const tagString = uniqueTags.join(' ');
+        return body ? `${body} ${tagString}` : tagString;
+    }
+
+    return body;
+}
+
+/**
  * Sorts the tagging configuration.
  * Rules are sorted by name (case-insensitive).
  * Match arrays and tags within each rule are sorted alphabetically (case-insensitive).
