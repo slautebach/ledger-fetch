@@ -656,6 +656,8 @@ class RBCDownloader(BankDownloader):
             # The RBC API returns IDs that change on every request for some accounts (e.g., base64 UUIDs).
             unique_trans_id = TransactionNormalizer.generate_transaction_id(date, amount, description, account.unique_account_id)
             
+            is_pending = bool(raw.get('isIntradayTransaction'))
+
             # Create Transaction
             txn = Transaction(raw, account.unique_account_id)
             txn.unique_transaction_id = unique_trans_id
@@ -666,6 +668,10 @@ class RBCDownloader(BankDownloader):
             txn.payee_name = payee_name # Normalized payee
             txn.amount = amount
             txn.currency = account.currency
+            txn.is_pending = is_pending
+            
+            # Ensure status is captured in raw data for importer
+            txn.raw_data['Status'] = 'Pending' if is_pending else 'Posted'
             
             return txn
         except Exception as e:

@@ -541,15 +541,40 @@ async function main() {
             importTxId = crypto.createHash('md5').update(idString).digest('hex');
           }
 
-          const isPending = (tx['Pending'] === 'True' || tx['Pending'] === 'true');
+          const pendingVal = String(tx['Pending'] || tx['pendingTransactionIndicator'] || tx['pendingIndicator'] || '').toLowerCase();
+          const statusVal = String(tx['Status'] || tx['status'] || '').toLowerCase();
+          const postDateVal = tx['Post Date'] || tx['postDate'] || tx['postedDate'] || '';
+
+          const isPending = (
+            pendingVal === 'true' || 
+            pendingVal === '1' || 
+            statusVal === 'pending' || 
+            statusVal === 'authorized' ||
+            statusVal === 'submitted' ||
+            statusVal === 'placed'
+          );
+          
+          const isPosted = (
+            pendingVal === 'false' || 
+            pendingVal === '0' ||
+            statusVal === 'posted' || 
+            statusVal === 'completed' || 
+            statusVal === 'settled' || 
+            statusVal === 'filled' ||
+            postDateVal !== ''
+          );
+
+          // A transaction is cleared if it is explicitly posted OR not pending
+          const isCleared = isPosted || !isPending;
+
           const existingTx = existingTxMap.get(importTxId);
 
           if (existingTx) {
-            if (isPending) {
+            if (!isCleared) {
               // Existing transaction is still pending in our CSV. Skip it to avoid unnecessary updates.
               continue;
             } else {
-              // CSV transaction is no longer pending. Did it use to be pending?
+              // CSV transaction is now cleared (posted). Did it use to be pending?
               const existingNotes = existingTx.notes || '';
               const wasPending = existingNotes.includes('#pending') || existingNotes.toLowerCase().startsWith('pending:');
 
@@ -574,7 +599,7 @@ async function main() {
           } else {
             // New transaction
             let finalNotes = notes;
-            if (isPending) {
+            if (!isCleared) {
               finalNotes = `Pending: ${notes} #pending`;
             }
             actualTransactions.push({
@@ -583,7 +608,7 @@ async function main() {
               payee_name: payee,
               imported_id: importTxId,
               notes: finalNotes,
-              cleared: !isPending,
+              cleared: isCleared,
               account: actualAccount.id,
               transfer_id: tx['Transfer Id'] || undefined
             });

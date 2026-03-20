@@ -307,9 +307,16 @@ class WealthsimpleDownloader(BankDownloader):
         txn.raw_data['Type'] = trans_type
         txn.raw_data['ID'] = ws_id
         
-        # Check for pending status on credit cards
+        # Determine status
+        ws_status = str(activity.get('status') or '').lower()
+        is_pending = ws_status in ['pending', 'authorized', 'submitted', 'placed']
+        
+        # Check for pending status on credit cards description too
         if account.type == AccountType.CREDIT_CARD and "(Pending)" in raw_description:
-            txn.is_pending = True
+            is_pending = True
+            
+        txn.is_pending = is_pending
+        txn.raw_data['Status'] = 'Pending' if is_pending else 'Posted'
         
         return txn
 

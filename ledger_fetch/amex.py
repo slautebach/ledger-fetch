@@ -301,6 +301,8 @@ class AmexDownloader(BankDownloader):
                     clean_desc = TransactionNormalizer.clean_description(description)
                     payee_name = TransactionNormalizer.normalize_payee(clean_desc)
                     
+                    is_pending = bool(item.get("pendingTransactionIndicator"))
+                    
                     txn = Transaction(item, account_id)
                     txn.unique_transaction_id = unique_trans_id
                     txn.date = date_str
@@ -309,6 +311,10 @@ class AmexDownloader(BankDownloader):
                     txn.payee_name = payee_name
                     txn.amount = amount
                     txn.currency = "CAD" # Default
+                    txn.is_pending = is_pending
+                    
+                    # Ensure status is captured in raw data for importer
+                    txn.raw_data['Status'] = 'Pending' if is_pending else 'Posted'
                     
                     transactions.append(txn)
                     

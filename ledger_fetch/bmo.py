@@ -520,8 +520,6 @@ class BMODownloader(BankDownloader):
         amount_val = float(txn_data.get('amount', 0))
         txn_indicator = txn_data.get('txnIndicator', 'DR')  # DR = Debit, CR = Credit
         txn_id = txn_data.get('transactionId', '')
-        txn_ref = txn_data.get('txnRefNumber', '')
-        txn_code = txn_data.get('txnCode', '')
         
         # Use posted date as the primary date if available, otherwise transaction date
         date_str = post_date if post_date else txn_date
@@ -552,24 +550,21 @@ class BMODownloader(BankDownloader):
         # Create Transaction
         txn = Transaction(txn_data, account.unique_account_id)
         txn.unique_transaction_id = unique_id
-        txn.account_name = account.account_name
         txn.date = date
         txn.description = description
-
-        txn.payee_name = payee_name # Normalized payee
+        txn.payee_name = payee_name
         txn.amount = amount
-        txn.currency = 'CAD'
-        
-        # Set standardized Pending flag
+        txn.currency = account.currency
         txn.is_pending = is_pending
+        
+        # Ensure status is captured in raw data for importer to see
+        txn.raw_data['Status'] = 'Pending' if is_pending else 'Posted'
         
         # BMO-specific fields in raw_data
         txn.raw_data['Transaction Date'] = txn_date
         txn.raw_data['Post Date'] = post_date
         txn.raw_data['Merchant Name'] = merchant_name
         txn.raw_data['Transaction Indicator'] = txn_indicator
-        txn.raw_data['Transaction Code'] = txn_code
-        txn.raw_data['Reference Number'] = txn_ref
         
         return txn
 
