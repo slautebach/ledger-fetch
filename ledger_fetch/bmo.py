@@ -223,7 +223,7 @@ class BMODownloader(BankDownloader):
         # Retry up to 5 times (15 seconds total)
         for attempt in range(5):
             try:
-                accounts = self.page.evaluate("""
+                accounts = self.page.evaluate(r"""
                     () => {
                         const accounts = [];
                         

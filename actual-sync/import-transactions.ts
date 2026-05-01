@@ -541,9 +541,10 @@ async function main() {
             importTxId = crypto.createHash('md5').update(idString).digest('hex');
           }
 
-          const pendingVal = String(tx['Pending'] || tx['pendingTransactionIndicator'] || tx['pendingIndicator'] || '').toLowerCase();
-          const statusVal = String(tx['Status'] || tx['status'] || '').toLowerCase();
-          const postDateVal = tx['Post Date'] || tx['postDate'] || tx['postedDate'] || '';
+          const txAny = tx as any;
+          const pendingVal = String(txAny['Pending'] || txAny['pendingTransactionIndicator'] || txAny['pendingIndicator'] || '').toLowerCase();
+          const statusVal = String(txAny['Status'] || txAny['status'] || '').toLowerCase();
+          const postDateVal = txAny['Post Date'] || txAny['postDate'] || txAny['postedDate'] || '';
 
           const isPending = (
             pendingVal === 'true' || 
