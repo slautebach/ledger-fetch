@@ -82,6 +82,11 @@ class LedgerFetchConfig(BaseModel):
         description="Compute each bank's fetch window from the newest month already on disk "
                     "(plus a one-month overlap) instead of refetching since_month history every run"
     )
+    linger_after_login_seconds: int = Field(
+        default=5,
+        description="Pause after login detection so the user can click Chrome's "
+                    "save-password bubble during manual logins"
+    )
     since_month: Optional[str] = Field(
         default=None,
         description="Optional month to fetch transactions from (YYYY-MM)"

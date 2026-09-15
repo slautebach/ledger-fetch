@@ -83,6 +83,16 @@ class BankDownloader(ABC):
         self.setup_driver()
         try:
             self.login()
+
+            # Give the user a moment to click Chrome's "Save password?"
+            # bubble after a manual login - the automated flow would
+            # otherwise move on and close the window before it can be saved.
+            linger = getattr(self.config.ledger_fetch, 'linger_after_login_seconds', 5)
+            if linger > 0:
+                print(f"(pausing {linger}s - if Chrome offered to save your "
+                      f"password, click Save now)")
+                import time as _time
+                _time.sleep(linger)
             
             # Fetch accounts first so we have type information
             try:
@@ -139,6 +149,7 @@ class BankDownloader(ABC):
             user_data_dir.chmod(0o700)
         except OSError:
             pass
+        self._ensure_password_prefs(user_data_dir)
 
         launch_args = {
             "user_data_dir": str(user_data_dir),
@@ -192,6 +203,33 @@ class BankDownloader(ABC):
         if b.profile_root:
             return b.profile_root / self.get_bank_name(), None
         return b.profile_path, b.profile_directory
+
+    @staticmethod
+    def _ensure_password_prefs(user_data_dir: Path):
+        """
+        Explicitly enable Chrome's password manager in the profile's
+        Preferences so save-password bubbles appear and autofill works.
+        Defaults are normally on, but seeded/copied profiles can drift.
+        """
+        import json
+        prefs_file = user_data_dir / "Default" / "Preferences"
+        try:
+            prefs = {}
+            if prefs_file.exists():
+                prefs = json.loads(prefs_file.read_text(encoding="utf-8"))
+            changed = False
+            if not prefs.get("credentials_enable_service", False):
+                prefs["credentials_enable_service"] = True
+                changed = True
+            profile = prefs.setdefault("profile", {})
+            if not profile.get("password_manager_enabled", False):
+                profile["password_manager_enabled"] = True
+                changed = True
+            if changed:
+                prefs_file.parent.mkdir(parents=True, exist_ok=True)
+                prefs_file.write_text(json.dumps(prefs), encoding="utf-8")
+        except Exception as e:
+            print(f"Warning: could not enforce password prefs: {e}")
 
     def _attach_traffic_recorder(self):
         """
