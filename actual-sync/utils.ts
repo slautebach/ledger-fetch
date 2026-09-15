@@ -10,7 +10,10 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as dotenv from 'dotenv';
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+// Credentials live outside this Drive-synced folder (hub AGENTS.md Ground
+// Rule 5): user-scope ~/.ledger_fetch/env first, local .env as fallback.
+const userEnv = path.join(process.env.HOME || '', '.ledger_fetch', 'env');
+dotenv.config({ path: fs.existsSync(userEnv) ? userEnv : path.resolve(__dirname, '../.env') });
 
 /**
  * Configuration interface for Actual Budget connection and file paths.

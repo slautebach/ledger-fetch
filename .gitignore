@@ -212,4 +212,6 @@ __marimo__/
 /actual-sync/node_modules
 /debug/
 .env
+logs/
+.pytest_cache/
 tests/fixtures/
