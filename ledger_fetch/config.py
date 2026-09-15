@@ -43,9 +43,15 @@ class BrowserConfig(BaseModel):
     """Configuration for Browser Automation."""
     headless: bool = Field(default=False)
     timeout: int = Field(default=30000)
+    profile_root: Optional[Path] = Field(
+        default=None,
+        description="Per-bank profile root: each bank gets its own Chrome "
+                    "user-data-dir at <root>/<bank>, enabling parallel fetching. "
+                    "Takes precedence over profile_path."
+    )
     profile_path: Path = Field(
         default=Path.home() / ".config" / "ledger_fetch",
-        description="Path to the Chrome user data directory"
+        description="Shared Chrome user data dir (used when profile_root is unset)"
     )
     profile_directory: Optional[str] = Field(
         default=None,

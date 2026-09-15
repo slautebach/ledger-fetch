@@ -209,6 +209,18 @@ def main():
         type=str,
         help="Fetch transactions from the first of this month onwards (YYYY-MM)"
     )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Run all banks concurrently, each in its own subprocess with its own "
+             "browser profile (requires browser.profile_root in config)"
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=4,
+        help="Max banks fetching concurrently in --parallel mode (default: 4)"
+    )
 
     args = parser.parse_args()
 
@@ -221,6 +233,71 @@ def main():
     if args.all:
         args.bank = 'all'
 
+    # Parallel mode: each bank runs in its own subprocess with its own
+    # browser profile, so Chrome instances never fight over a shared
+    # user-data-dir. The parent aggregates exit codes.
+    if args.parallel:
+        if args.bank != 'all':
+            print("--parallel requires --bank all (or --all).")
+            return 1
+        return run_parallel(args)
+
+    return _sequential_fetch(args)
+
+
+def run_parallel(args) -> int:
+    """Fetch all banks concurrently, --jobs at a time."""
+    import subprocess
+
+    if not settings.browser.profile_root:
+        print("ERROR: --parallel needs per-bank profiles. Set browser.profile_root "
+              "in config.yaml (each bank then uses <root>/<bank>).")
+        return 1
+
+    passthrough = []
+    if args.headless:
+        passthrough.append("--headless")
+    if args.debug:
+        passthrough.append("--debug")
+    if args.diagnose:
+        passthrough.append("--diagnose")
+    if args.since:
+        passthrough += ["--since", args.since]
+
+    banks = list(BANKS.keys())
+    print(f"Parallel fetch: {len(banks)} banks, {args.jobs} at a time")
+    print("Each bank logs to its own file in logs/ and prints its own RUN SUMMARY.\n")
+
+    pending = list(banks)
+    running: Dict[str, subprocess.Popen] = {}
+    failures: Dict[str, int] = {}
+
+    while pending or running:
+        while pending and len(running) < args.jobs:
+            bank = pending.pop(0)
+            cmd = [sys.executable, str(Path(__file__).resolve()), "--bank", bank] + passthrough
+            print(f"[parallel] starting {bank}")
+            running[bank] = subprocess.Popen(cmd, cwd=str(Path(__file__).resolve().parent))
+        for bank, proc in list(running.items()):
+            rc = proc.poll()
+            if rc is None:
+                continue
+            del running[bank]
+            status = "ok" if rc == 0 else f"FAILED (exit {rc})"
+            print(f"[parallel] {bank} finished: {status}")
+            if rc != 0:
+                failures[bank] = rc
+
+    if failures:
+        print(f"\nParallel run complete: {len(failures)} bank(s) failed: "
+              + ", ".join(f"{b} (exit {rc})" for b, rc in failures.items()))
+        return 1
+    print("\nParallel run complete: all banks OK.")
+    return 0
+
+
+def _sequential_fetch(args) -> int:
+    """Original single-process fetch path (one bank or all banks in sequence)."""
     # Update config from args
     if args.headless:
         settings.browser.headless = True
@@ -234,7 +311,8 @@ def main():
 
     print(f"Starting Ledger Fetch...")
     print(f"Output directory: {settings.ledger_fetch.transactions_path.resolve()}")
-    print(f"Browser profile: {settings.browser.profile_path.resolve()}")
+    profile = settings.browser.profile_root or settings.browser.profile_path
+    print(f"Browser profile: {profile.resolve()}")
 
     banks_to_run = [args.bank]
     from playwright.sync_api import sync_playwright
@@ -317,10 +395,8 @@ def main():
                 "status": status,
             })
 
-    # Restore stdout before printing the summary so it lands in both places
-    sys.stdout = tee_out.original
-    sys.stderr = tee_err.original
-
+    # Print summary while the tee is still active so it lands in the log
+    # file AND the terminal
     print("\n" + "=" * 72)
     print("RUN SUMMARY")
     print("=" * 72)
@@ -333,6 +409,9 @@ def main():
         print("Result: FAILURES DETECTED - check the log above.")
     else:
         print("Result: all banks OK.")
+
+    sys.stdout = tee_out.original
+    sys.stderr = tee_err.original
     print(f"Full log: {log_path}")
     tee_out.close()
     tee_err.close()

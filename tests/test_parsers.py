@@ -123,6 +123,25 @@ class TestBmoParser:
         assert len(bmo._dedupe([t1, t2])) == 1
 
 
+class TestProfileResolution:
+    def test_per_bank_mode(self):
+        from ledger_fetch.config import Config, BrowserConfig
+        cfg = Config(browser=BrowserConfig(profile_root=Path("/tmp/profiles")))
+        d = BMODownloader(config=cfg)
+        udd, pdir = d._resolve_profile()
+        assert udd == Path("/tmp/profiles/bmo")
+        assert pdir is None
+
+    def test_shared_mode_falls_back_to_profile_path(self):
+        from ledger_fetch.config import Config, BrowserConfig
+        cfg = Config(browser=BrowserConfig(
+            profile_path=Path("/tmp/shared"), profile_directory="Default"))
+        d = AmexDownloader(config=cfg)
+        udd, pdir = d._resolve_profile()
+        assert udd == Path("/tmp/shared")
+        assert pdir == "Default"
+
+
 class TestRetryHelper:
     def test_with_retries_succeeds_first_try(self):
         from ledger_fetch.utils import with_retries

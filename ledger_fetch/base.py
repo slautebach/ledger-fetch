@@ -128,25 +128,39 @@ class BankDownloader(ABC):
         The persistent context means we are essentially opening a standard Chrome 
         user profile programmatically.
         """
-        print(f"Launching browser with profile: {self.config.browser.profile_path}")
-        
-        # Ensure profile directory exists
-        self.config.browser.profile_path.mkdir(parents=True, exist_ok=True)
-        
+        user_data_dir, profile_directory = self._resolve_profile()
+        print(f"Launching browser with profile: {user_data_dir}"
+              + (f" (dir: {profile_directory})" if profile_directory else ""))
+
+        # Ensure profile directory exists (owner-only: saved passwords live
+        # here unencrypted under --password-store=basic)
+        user_data_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            user_data_dir.chmod(0o700)
+        except OSError:
+            pass
+
         launch_args = {
-            "user_data_dir": str(self.config.browser.profile_path),
+            "user_data_dir": str(user_data_dir),
             "channel": "chrome",
             "headless": self.config.browser.headless,
             "accept_downloads": True,
-            "args": ["--disable-blink-features=AutomationControlled"]
+            # Dropping --enable-automation lets Chrome show save-password
+            # bubbles (and looks less bot-like to banks). --password-store=basic
+            # keeps the password manager working on Linux without a keyring.
+            "ignore_default_args": ["--enable-automation", "--use-mock-keychain"],
+            "args": [
+                "--disable-blink-features=AutomationControlled",
+                "--password-store=basic",
+            ],
         }
 
         # When borrowing a real Chrome user data dir, pick the profile with
         # --profile-directory; daily Chrome must be closed or the singleton
         # lock makes the launch hand off to the running instance and die.
-        if self.config.browser.profile_directory:
+        if profile_directory:
             launch_args["args"].append(
-                f"--profile-directory={self.config.browser.profile_directory}"
+                f"--profile-directory={profile_directory}"
             )
 
         # Setup HAR recording if debug or diagnose is enabled
@@ -165,6 +179,19 @@ class BankDownloader(ABC):
 
         if self.config.ledger_fetch.diagnose:
             self._attach_traffic_recorder()
+
+    def _resolve_profile(self):
+        """
+        Resolve this bank's Chrome user-data-dir and optional profile directory.
+
+        Per-bank mode (browser.profile_root set): <root>/<bank> - isolated
+        sessions, safe to run banks in parallel. Shared mode (fallback):
+        browser.profile_path (+ optional profile_directory) for all banks.
+        """
+        b = self.config.browser
+        if b.profile_root:
+            return b.profile_root / self.get_bank_name(), None
+        return b.profile_path, b.profile_directory
 
     def _attach_traffic_recorder(self):
         """
@@ -540,7 +567,17 @@ class BankDownloader(ABC):
             
             existing_data[acc.unique_account_id] = row_data
 
-        # 5. Write back to file
+        # 5. Write back to file. Banks can run in parallel (per-bank
+        # profiles), and this file is shared - serialize the
+        # read-modify-write with an advisory lock.
+        lock_path = output_file.with_suffix(".lock")
+        try:
+            import fcntl
+            lock_fh = open(lock_path, "w")
+            fcntl.flock(lock_fh, fcntl.LOCK_EX)
+        except Exception:
+            lock_fh = None  # non-POSIX or lock failure: proceed unlocked
+
         try:
             with open(output_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=fields)
@@ -554,6 +591,14 @@ class BankDownloader(ABC):
             print(f"Saved statement info to {output_file}")
         except Exception as e:
             print(f"Error saving credit card statements: {e}")
+        finally:
+            if lock_fh is not None:
+                try:
+                    import fcntl
+                    fcntl.flock(lock_fh, fcntl.LOCK_UN)
+                    lock_fh.close()
+                except Exception:
+                    pass
 
     def teardown(self):
         """Close browser context."""

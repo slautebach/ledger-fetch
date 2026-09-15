@@ -120,8 +120,16 @@ This auto-adapts when banks rotate API keys or add device headers. Used by `bmo.
 
 ## Ops notes
 
+- **Fetch windows are automatic** (`auto_window`, on by default): each bank fetches from one month before its newest on-disk data. Force a full window once with `--since YYYY-MM`; set `since_month` in config.yaml only for a permanent override.
+- **Failures are loud**: every run prints a RUN SUMMARY table (bank / txns / newest date / status) and exits non-zero when a bank with existing history returns zero transactions or errors. Each run also tees all output to `logs/<ts>_<bank>.log`.
+- **`--diagnose`** records all XHR/fetch traffic to `transactions/debug_logs/<bank>_<ts>_traffic.jsonl` (+ HAR) — use this instead of writing ad-hoc traffic-capture scripts when a bank's API breaks.
+- **`sync.sh`** gates the Actual Budget import on a clean fetch (`RUN_ACTUAL_SYNC=1 ./sync.sh` to enable the import step).
+- **Credentials live at `~/.ledger_fetch/env`** (user scope, outside this Drive-synced folder); both the Python config loader and `actual-sync/utils.ts` read it, falling back to a local `.env`.
+- **Parser regression tests**: `./venv/bin/python -m pytest tests/ -v` — fixtures in `tests/fixtures/` were captured from real API responses (2026-09); update them when a bank's schema changes.
+- Requirements are pinned (`requirements.txt`); on any `ws-api` bump, re-diff the monkey-patch in `wealthsimple.py` against the installed `ws_api` source.
+- **Per-bank profiles + parallel fetching** (2026-09-15): `browser.profile_root` gives each bank its own Chrome user-data-dir at `<root>/<bank>` (seeded from the old shared profile, so existing logins carried over). `python main.py --all --parallel [--jobs N]` fetches all banks concurrently, one subprocess per bank (each writes its own `logs/` file and RUN SUMMARY; the shared `creditcard-statements.csv` is flock-serialized). `sync.sh` uses this mode. Shared-profile mode still works by unsetting `profile_root` and setting `profile_path` (+ `profile_directory`); borrowing the real daily Chrome profile requires daily Chrome fully closed (user-data-dir singleton lock).
+- **Password saving is enabled**: Playwright's default `--enable-automation` (which suppresses Chrome's save-password bubble) is dropped via `ignore_default_args`, and `--password-store=basic` keeps the password manager working on Linux without a keyring. When a bank session expires and you log in manually, Chrome offers to save the password; saved passwords are stored **unencrypted** inside each profile dir (hence `chmod 700` on profile dirs). To review: open `chrome://settings/passwords` in that bank's profile.
 - Run fetchers unattended in background with `PYTHONUNBUFFERED=1` so logs stream to file.
-- All banks share one Chrome profile — the real daily profile (`~/.config/google-chrome`, directory `Default` = "Shawn"); banks run sequentially — never two fetchers at once. Daily Chrome must be fully closed before fetching (user-data-dir singleton lock).
 - Manual 2FA happens in the visible browser window; each bank's `login()` prints instructions and waits (5 min default).
 - When killing background fetch processes, `pkill -f` patterns match your own monitoring shell's command line — prefer `ps aux | grep "[v]env/bin/python main.py"` to check state.
 

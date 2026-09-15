@@ -16,7 +16,7 @@ if [ -d "$SCRIPT_DIR/venv" ]; then
 fi
 
 fetch_rc=0
-python3 "$SCRIPT_DIR/main.py" --all || fetch_rc=$?
+python3 "$SCRIPT_DIR/main.py" --all --parallel || fetch_rc=$?
 python3 "$SCRIPT_DIR/main.py" --normalize || true
 
 if [ "$fetch_rc" -ne 0 ]; then
