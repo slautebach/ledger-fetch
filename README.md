@@ -48,10 +48,11 @@ The application can be configured via a `config.yaml` file. The script will sear
 
 A sample `config.yaml` has been provided in the project root. Key configurable settings include:
 
-* `browser_profile_path`: Path to the Chrome user profile directory for persistent logins.
-* `output_dir`: Directory where downloaded transactions will be saved.
-* `headless`: Run browser in headless mode (without a visible UI).
-* `timeout`: Default timeout for browser actions in milliseconds.
+* `browser.profile_path`: Path to the Chrome user data directory for persistent logins. Can be a dedicated dir (`~/.config/ledger_fetch`) or the real Chrome one (`~/.config/google-chrome`).
+* `browser.profile_directory`: Which profile inside the user data dir to open (e.g. `Default`). Only needed for a real Chrome user data dir — and daily Chrome must be fully closed while fetching.
+* `ledger_fetch.transactions_path`: Directory where downloaded transactions will be saved.
+* `browser.headless`: Run browser in headless mode (without a visible UI).
+* `browser.timeout`: Default timeout for browser actions in milliseconds.
 * Bank-specific `enabled` flags to enable/disable specific downloaders.
 * `actual`: Configuration for Actual Budget sync (see below).
 

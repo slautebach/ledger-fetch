@@ -36,6 +36,10 @@ class BankDownloader(ABC):
         self.page: Page = None
         self.playwright: Playwright = None
         self.accounts_cache: Dict[str, Account] = {}
+        # Populated by save_transactions; read by main.py for the run summary
+        self.last_run_stats: Dict[str, Any] = None
+        # Per-bank save filter (YYYY-MM), overrides config since_month when set
+        self.effective_since: str = None
 
         # Log configuration
         try:
@@ -106,7 +110,9 @@ class BankDownloader(ABC):
                 print(f"{'='*60}\n")
                 import traceback
                 traceback.print_exc()
-                input("Press Enter to close the browser and exit...")
+                import sys
+                if sys.stdin is not None and sys.stdin.isatty():
+                    input("Press Enter to close the browser and exit...")
             raise e
         finally:
             self.teardown()
@@ -134,6 +140,14 @@ class BankDownloader(ABC):
             "accept_downloads": True,
             "args": ["--disable-blink-features=AutomationControlled"]
         }
+
+        # When borrowing a real Chrome user data dir, pick the profile with
+        # --profile-directory; daily Chrome must be closed or the singleton
+        # lock makes the launch hand off to the running instance and die.
+        if self.config.browser.profile_directory:
+            launch_args["args"].append(
+                f"--profile-directory={self.config.browser.profile_directory}"
+            )
 
         # Setup HAR recording if debug is enabled
         if self.config.ledger_fetch.debug:

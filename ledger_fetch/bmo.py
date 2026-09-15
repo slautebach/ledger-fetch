@@ -141,10 +141,25 @@ class BMODownloader(BankDownloader):
         for idx, account in enumerate(accounts, 1):
             print(f"\n[{idx}/{len(accounts)}] Processing: {account.account_name} ({account.account_number})")
             try:
+                # Arm the sniffer BEFORE clicking: the app fires its transaction
+                # request the instant the details route activates, harvesting
+                # valid device-bound headers we cannot synthesize ourselves.
+                sniffer = self._arm_api_sniffer()
+
                 # Click on the account to open it
-                self._click_account(idx - 1)  # 0-indexed
-                time.sleep(3)  # Wait for account page to load
-                
+                if not self._click_account(idx - 1):  # 0-indexed
+                    print("  Could not open account details page; skipping account.")
+                    self._disarm_api_sniffer(sniffer)
+                    continue
+
+                exchange = self._await_api_exchange(sniffer, timeout_s=90)
+                if exchange is None:
+                    print("  Warning: app did not fire its transaction API call; "
+                          "cannot build request template. Skipping account.")
+                    continue
+                template, initial_text = exchange
+                print("  Captured app's API request template (device headers included).")
+
                 current_url = self.page.url
                 print(f"  Current URL: {current_url}")
                 
@@ -159,6 +174,15 @@ class BMODownloader(BankDownloader):
                 # BMO API doesn't allow date ranges that cross calendar years
                 # Fetch transactions by calendar year (looping backwards)
                 all_account_transactions = []
+
+                # The captured call already covers the most recent window
+                try:
+                    initial_json = json.loads(initial_text)
+                    initial_txns = self._parse_transaction_response(initial_json, account)
+                    print(f"  Initial (app-fetched window): {len(initial_txns)} transactions")
+                    all_account_transactions.extend(initial_txns)
+                except Exception as e:
+                    print(f"  Could not parse app's initial response: {e}")
                 
                 current_date = datetime.now()
                 current_year = current_date.year
@@ -179,12 +203,13 @@ class BMODownloader(BankDownloader):
                     
                     print(f"  Fetching {target_year}: {from_date_str} to {to_date_str}...")
                     try:
-                        transactions_year = self._fetch_transactions_from_api(from_date_str, to_date_str, account)
+                        transactions_year = self._replay_api_call(template, from_date_str, to_date_str, account)
                         all_account_transactions.extend(transactions_year)
                     except Exception as e:
                         print(f"  Error fetching {target_year}: {e}")
                     time.sleep(1)
                 
+                all_account_transactions = self._dedupe(all_account_transactions)
                 all_transactions.extend(all_account_transactions)
                 
                 # Navigate back to accounts list for next account
@@ -292,200 +317,235 @@ class BMODownloader(BankDownloader):
         return []
 
     def _click_account(self, index: int):
-        """Click on a credit card account by index.
-        
+        """Click on a credit card account by index and wait for the details page.
+
+        The accounts list is an Angular app whose click handlers bind shortly
+        after the DOM renders, so a click fired the moment the element appears
+        can be silently swallowed. We settle, click, and verify the router
+        actually navigated to /account-details/, retrying once if not.
+
         Args:
             index: 0-based index of the account to click
-        """
-        try:
-            self.page.evaluate(f"""
-                (index) => {{
-                    const accountItems = document.querySelectorAll('app-accounts-list-group-item');
-                    const creditCardItems = [];
-                    
-                    accountItems.forEach(item => {{
-                        const container = item.closest('.account-container');
-                        if (!container) return;
-                        
-                        const heading = container.querySelector('app-accounts-list-category-heading');
-                        if (!heading || !heading.textContent.toLowerCase().includes('credit card')) return;
-                        
-                        creditCardItems.push(item);
-                    }});
-                    
-                    if (creditCardItems[index]) {{
-                        const clickableRow = creditCardItems[index].querySelector('.account-row');
-                        if (clickableRow) {{
-                            clickableRow.click();
-                        }}
-                    }}
-                }}
-            """, index)
-            
-        except Exception as e:
-            print(f"Error clicking account: {e}")
 
-    def _fetch_transactions_from_api(self, from_date: str, to_date: str, account: Account) -> List[Transaction]:
-        """
-        Fetch transactions from BMO REST API by injecting JS.
-        
-        This method constructs the complex payload required by BMO's backend and then
-        uses `page.evaluate()` to perform the `fetch` call from within the authorized 
-        browser session. This bypasses issues with CORS and missing cookies that would 
-        occur if we used `self.page.request.post` from the Python side.
-        
-        The payload includes various session attributes and headers (e.g., XSRF-TOKEN)
-        that are required for the server to accept the request.
-        
-        Args:
-            from_date: Start date in YYYY-MM-DD format
-            to_date: End date in YYYY-MM-DD format
-            account: The account object
-            
         Returns:
-            List[Transaction]: List of parsed transactions from this batch.
+            True if the details page was reached, False otherwise.
         """
-        
-        api_url = "https://www1.bmo.com/api/cdb/utility/cache/transient-extended-credit-card-data/get"
-        
-        try:
-            # Build request payload
-            post_data = {
-                "accountIndex": "0",
-                "fromDate": from_date,
-                "toDate": to_date,
-                "promoOfferToggle": True,
-                "promoOfferDetails": {
-                    "interactionPoint": "CDB_InstallmentTab_IP",
-                    "sessionAttributes": [
-                        {"name": "CHANNEL_ID", "value": "CDB_InstallmentTab", "valueDataType": "String"},
-                        {"name": "SESSION_CHANNEL_ID", "value": "OLB", "valueDataType": "String"},
-                        {"name": "AUDIENCE_LEVEL", "value": "Customer", "valueDataType": "String"},
-                        {"name": "CHANNEL_LANGUAGE", "value": "EN", "valueDataType": "String"},
-                        {"name": "DIGITAL_CHANNEL_ID", "value": "OLB", "valueDataType": "String"},
-                        {"name": "DIGITAL_DEVICE_DETAIL", "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36", "valueDataType": "String"}
-                    ]
+        time.sleep(2)  # let Angular bind handlers after render
+
+        click_js = """
+            (index) => {
+                const accountItems = document.querySelectorAll('app-accounts-list-group-item');
+                const creditCardItems = [];
+
+                accountItems.forEach(item => {
+                    const container = item.closest('.account-container');
+                    if (!container) return;
+
+                    const heading = container.querySelector('app-accounts-list-category-heading');
+                    if (!heading || !heading.textContent.toLowerCase().includes('credit card')) return;
+
+                    creditCardItems.push(item);
+                });
+
+                if (creditCardItems[index]) {
+                    const clickableRow = creditCardItems[index].querySelector('.account-row');
+                    if (clickableRow) {
+                        clickableRow.click();
+                        return true;
+                    }
+                    creditCardItems[index].click();
+                    return true;
                 }
+                return false;
             }
-            
-            if getattr(self.config.ledger_fetch, 'debug', False):
-                print(f"DEBUG: API Request Payload for {from_date} to {to_date}:")
-                print(json.dumps(post_data, indent=2))
+        """
 
+        for attempt in (1, 2):
+            try:
+                clicked = self.page.evaluate(click_js, index)
+            except Exception as e:
+                print(f"Error clicking account: {e}")
+                return False
+            if not clicked:
+                print("Account row not found for clicking.")
+                return False
 
-            
-            # Make API call using page.evaluate to maintain session
+            # Wait for the SPA router to land on the details page
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                if "account-details" in self.page.url:
+                    print(f"  Details page reached: {self.page.url.split('?')[0]}")
+                    return True
+                time.sleep(1)
+
+            print(f"  Click attempt {attempt}: still at {self.page.url.split('?')[0]}; retrying...")
+
+        return False
+
+    def _arm_api_sniffer(self) -> Dict:
+        """
+        Arm request/response listeners for the app's own transaction API call.
+
+        Must be called BEFORE clicking into the account: the app fires its
+        transient-cache request at the moment the details route activates, so
+        listeners armed after detecting the URL change would miss it.
+        """
+        api_match = "transient-extended-credit-card-data/get"
+        state = {"url": None, "headers": None, "body": {}, "response_text": None,
+                 "handlers": []}
+
+        def on_request(request):
+            if api_match in request.url and request.method == "POST":
+                state["url"] = request.url
+                # Playwright headers are lower-cased; drop cookie so the browser
+                # attaches fresh ones on replay
+                state["headers"] = {
+                    k: v for k, v in request.headers.items() if k.lower() != "cookie"
+                }
+                try:
+                    state["body"] = json.loads(request.post_data)
+                except (TypeError, ValueError):
+                    state["body"] = {}
+
+        def on_response(response):
+            if api_match in response.url:
+                try:
+                    state["response_text"] = response.text()
+                except Exception:
+                    pass
+
+        self.page.on("request", on_request)
+        self.page.on("response", on_response)
+        state["handlers"] = [("request", on_request), ("response", on_response)]
+        return state
+
+    def _disarm_api_sniffer(self, state: Dict):
+        for event, handler in state.get("handlers", []):
+            try:
+                self.page.remove_listener(event, handler)
+            except Exception:
+                pass
+
+    def _await_api_exchange(self, state: Dict, timeout_s: float = 90):
+        """
+        Wait for the sniffer to capture the app's transaction API exchange.
+
+        Returns:
+            (template, response_text) or None if the app never made the call.
+        """
+        # The transactions view initializes lazily; scrolling encourages the
+        # render. No clicks - they can reset the app's in-flight init.
+        nudge_js = "() => { window.scrollTo(0, document.body.scrollHeight); }"
+
+        try:
+            deadline = time.time() + timeout_s
+            next_nudge = time.time() + 5
+            while time.time() < deadline and state["headers"] is None:
+                if time.time() >= next_nudge:
+                    try:
+                        self.page.evaluate(nudge_js)
+                    except Exception:
+                        pass
+                    next_nudge = time.time() + 7
+                time.sleep(0.5)
+        finally:
+            self._disarm_api_sniffer(state)
+
+        if state["headers"] is None:
+            return None
+
+        # Response may arrive a beat after the request
+        resp_deadline = time.time() + 10
+        while time.time() < resp_deadline and state["response_text"] is None:
+            time.sleep(0.5)
+
+        template = {
+            "url": state["url"],
+            "headers": state["headers"],
+            "body": state.get("body", {}),
+        }
+        return template, state.get("response_text") or ""
+
+    def _replay_api_call(self, template: Dict, from_date: str, to_date: str, account: Account) -> List[Transaction]:
+        """
+        Replay the captured transaction API request with a different date range.
+
+        Keeps device-bound headers verbatim; refreshes per-request IDs
+        (x-request-id, x-fapi-interaction-id, x-original-request-time).
+        """
+        try:
             result = self.page.evaluate("""
                 async (params) => {
+                    const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+                        const r = Math.random() * 16 | 0;
+                        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                        return v.toString(16);
+                    });
+                    const headers = Object.assign({}, params.headers);
+                    if ('x-request-id' in headers) {
+                        headers['x-request-id'] = 'REQ_' + Array.from({length: 16},
+                            () => Math.floor(Math.random() * 16).toString(16)).join('');
+                    }
+                    if ('x-fapi-interaction-id' in headers) {
+                        headers['x-fapi-interaction-id'] = uuid();
+                    }
+                    headers['x-original-request-time'] = new Date().toUTCString();
+
+                    const body = Object.assign({}, params.body, {
+                        fromDate: params.fromDate,
+                        toDate: params.toDate
+                    });
+
                     try {
-                        // Extract XSRF token from cookies
-                        const cookies = document.cookie.split(';').reduce((acc, cookie) => {
-                            const [key, value] = cookie.trim().split('=');
-                            acc[key] = value;
-                            return acc;
-                        }, {});
-                        
-                        const xsrfToken = cookies['XSRF-TOKEN'] || '';
-                        
-                        // Update User-Agent in payload to match actual browser
-                        const payload = params.data;
-                        if (payload.promoOfferDetails && payload.promoOfferDetails.sessionAttributes) {
-                            const uaAttr = payload.promoOfferDetails.sessionAttributes.find(attr => attr.name === 'DIGITAL_DEVICE_DETAIL');
-                            if (uaAttr) {
-                                uaAttr.value = navigator.userAgent;
-                            }
-                        }
-                        
-                        // Generate required IDs
-                        const generateUUID = () => {
-                            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-                                const r = Math.random() * 16 | 0;
-                                const v = c === 'x' ? r : (r & 0x3 | 0x8);
-                                return v.toString(16);
-                            });
-                        };
-                        
-                        const currentPath = window.location.pathname;
-                        const currentTime = new Date().toUTCString();
-                        
-                        const headers = {
-                            'Content-Type': 'application/json',
-                            'Accept': 'application/json, text/plain, */*',
-                            'X-XSRF-TOKEN': xsrfToken,
-                            'X-ChannelType': 'OLB',
-                            'X-App-Current-Path': currentPath,
-                            'X-App-Version': 'session-id',
-                            'X-Original-Request-Time': currentTime,
-                            'X-UI-Session-ID': '0.0.1',
-                            'x-api-key': '47c4abcb8fdc34e1a4aacc8b19912c30',
-                            'x-app-cat-id': '63623',
-                            'x-bmo-session-id': 'session-id',
-                            'x-client-id': '63623',
-                            'x-fapi-financial-id': '001',
-                            'x-fapi-interaction-id': generateUUID(),
-                            'x-request-id': 'REQ_' + Array.from({length: 16}, () => Math.floor(Math.random() * 16).toString(16)).join(''),
-                            'x_bmo_csg': 'true',
-                            'x_bmo_user_lang': 'EN',
-                            'x_channeltype': 'OLB'
-                        };
-                        
-                        // Add a debugger statement to pause JS execution if DevTools is open
-                        debugger;
-                        
-                        const response = await fetch(params.url, {
+                        const resp = await fetch(params.url, {
                             method: 'POST',
                             headers: headers,
                             credentials: 'include',
-                            body: JSON.stringify(params.data)
+                            body: JSON.stringify(body)
                         });
-                        
-                        const text = await response.text();
-                        return {
-                            ok: response.ok,
-                            status: response.status,
-                            text: text
-                        };
-                    } catch (error) {
-                        return { error: error.message };
+                        const text = await resp.text();
+                        return {ok: resp.ok, status: resp.status, text: text};
+                    } catch (e) {
+                        return {error: e.message};
                     }
                 }
             """, {
-                "url": api_url,
-                "data": post_data
+                "url": template["url"],
+                "headers": template["headers"],
+                "body": template["body"],
+                "fromDate": from_date,
+                "toDate": to_date,
             })
-            
+
             if "error" in result:
-                print(f"API fetch error: {result['error']}")
-                if getattr(self.config.ledger_fetch, 'debug', False):
-                    print("!"*60)
-                    print("API EXECUTION ERROR")
-                    print("The JavaScript code failed to execute properly.")
-                    print("Check the BROWSER CONSOLE logs above for details.")
-                    print("!"*60)
-                    input("Press Enter to continue (and likely fail)...")
+                print(f"  API fetch error: {result['error']}")
                 return []
-                
+
             if not result.get("ok"):
-                print(f"API error status: {result.get('status')}")
-                if getattr(self.config.ledger_fetch, 'debug', False):
-                    print(f"Response text preview: {result.get('text', '')[:1000]}")
-                    print("!"*60)
-                    print("API REQUEST FAILED (Non-200 Status)")
-                    print("1. Check the Network tab in the browser.")
-                    print("2. Look for the failed request.")
-                    print("3. Check the recorded HAR file.")
-                    print("!"*60)
-                    input("Press Enter to continue (and likely fail)...")
+                print(f"  API error status: {result.get('status')}")
+                preview = result.get("text", "")[:500]
+                print(f"  Response preview: {preview}")
                 return []
-                
+
             json_response = json.loads(result.get("text", "{}"))
             return self._parse_transaction_response(json_response, account)
-            
+
         except Exception as e:
-            print(f"Error fetching transactions: {e}")
+            print(f"  Error fetching transactions: {e}")
             import traceback
             traceback.print_exc()
             return []
+
+    def _dedupe(self, transactions: List[Transaction]) -> List[Transaction]:
+        """Remove duplicate transactions by unique ID (keep first occurrence)."""
+        seen = {}
+        for t in transactions:
+            if t.unique_transaction_id not in seen:
+                seen[t.unique_transaction_id] = t
+        removed = len(transactions) - len(seen)
+        if removed:
+            print(f"  Removed {removed} duplicate transaction(s) within account")
+        return list(seen.values())
 
     def _parse_transaction_response(self, json_data: Dict[str, Any], account: Account) -> List[Transaction]:
         """Parse BMO API JSON response and normalize to standard format."""

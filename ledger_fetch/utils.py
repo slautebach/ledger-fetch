@@ -10,9 +10,66 @@ This module provides common utilities used across the application, including:
 import csv
 import re
 import hashlib
+import sys
+import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
+
+
+class Tee:
+    """Duplicate stdout/stderr writes to a log file.
+
+    Bank downloaders print their progress; teeing sys.stdout captures every
+    print from the whole run into a per-run log file without touching each
+    module. Restore with ``sys.stdout = tee.original``.
+    """
+
+    def __init__(self, log_path: Path, original):
+        self.original = original
+        self._file = open(log_path, "a", encoding="utf-8", buffering=1)
+
+    def write(self, data):
+        self.original.write(data)
+        self._file.write(data)
+
+    def flush(self):
+        self.original.flush()
+        self._file.flush()
+
+    def close(self):
+        self._file.close()
+
+
+def with_retries(fn: Callable[[], Any],
+                 should_retry: Callable[[Any], bool],
+                 attempts: int = 3,
+                 base_delay: float = 2.0,
+                 desc: str = "") -> Any:
+    """
+    Call ``fn`` up to ``attempts`` times, retrying when ``should_retry(result)``
+    is true (or the call raises). Backoff doubles per attempt.
+
+    Banks rate-limit (CTFS 429) and have transient edge errors (BMO 503,
+    Amex token warm-up 401); a short retry turns hard failures into delays.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            result = fn()
+            if not should_retry(result):
+                return result
+            status = getattr(result, "status", None) or result
+        except Exception as e:
+            result = None
+            status = repr(e)
+        if attempt < attempts:
+            delay = base_delay * (2 ** (attempt - 1))
+            print(f"  {desc} attempt {attempt}/{attempts} retryable ({status}); "
+                  f"retrying in {delay:.0f}s...")
+            time.sleep(delay)
+    print(f"  {desc} exhausted {attempts} attempts ({status}).")
+    return result
+
 
 class TransactionNormalizer:
     """

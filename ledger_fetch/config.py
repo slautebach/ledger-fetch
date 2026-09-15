@@ -17,7 +17,12 @@ import os
 import yaml
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables: user-scope file first (this folder syncs to
+# Drive, so credentials must not live here - see hub AGENTS.md Ground Rule 5),
+# falling back to a local .env during migration.
+_USER_ENV = Path.home() / ".ledger_fetch" / "env"
+if _USER_ENV.exists():
+    load_dotenv(_USER_ENV)
 load_dotenv()
 
 DEFAULT_DAYS_TO_FETCH = 1095 # 3 years
@@ -39,8 +44,13 @@ class BrowserConfig(BaseModel):
     headless: bool = Field(default=False)
     timeout: int = Field(default=30000)
     profile_path: Path = Field(
-        default=Path.home() / ".ledger_fetch_chrome_profile",
-        description="Path to the Chrome user profile directory"
+        default=Path.home() / ".config" / "ledger_fetch",
+        description="Path to the Chrome user data directory"
+    )
+    profile_directory: Optional[str] = Field(
+        default=None,
+        description="Profile directory inside user_data_dir to open (e.g. 'Default'). "
+                    "Only needed when profile_path points at a real Chrome user data dir."
     )
 
 class LedgerFetchConfig(BaseModel):
@@ -56,6 +66,15 @@ class LedgerFetchConfig(BaseModel):
     debug: bool = Field(
         default=False,
         description="Enable debug mode"
+    )
+    diagnose: bool = Field(
+        default=False,
+        description="Record all XHR/fetch traffic to debug_logs/<bank>_<ts>_traffic.jsonl (implies debug)"
+    )
+    auto_window: bool = Field(
+        default=True,
+        description="Compute each bank's fetch window from the newest month already on disk "
+                    "(plus a one-month overlap) instead of refetching since_month history every run"
     )
     since_month: Optional[str] = Field(
         default=None,

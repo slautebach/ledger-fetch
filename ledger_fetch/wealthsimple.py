@@ -334,7 +334,9 @@ class WealthsimpleDownloader(BankDownloader):
             session-maintenance headers that the browser might be managing in the background.
         """
         
-        def playwright_send_http_request(api_self, url, method='POST', data=None, headers=None, return_headers=False):
+        def playwright_send_http_request(api_self, url, method='POST', data=None,
+                                         headers=None, return_headers=False,
+                                         return_response=False):
             headers = headers or {}
             if method == 'POST':
                 headers['Content-Type'] = 'application/json'
@@ -350,7 +352,7 @@ class WealthsimpleDownloader(BankDownloader):
 
             if WealthsimpleAPI.user_agent:
                 headers['User-Agent'] = WealthsimpleAPI.user_agent
-            
+
             try:
                 if method.upper() == 'GET':
                     response = self.context.request.get(url, headers=headers)
@@ -361,9 +363,12 @@ class WealthsimpleDownloader(BankDownloader):
 
                 adapter = PlaywrightResponseAdapter(response)
 
+                if return_response:
+                    return adapter
+
                 if return_headers:
-                    headers_str = '\\r\\n'.join(f"{k}: {v}" for k, v in adapter.headers.items())
-                    return f"{headers_str}\\r\\n\\r\\n{adapter.text}"
+                    headers_str = '\r\n'.join(f"{k}: {v}" for k, v in adapter.headers.items())
+                    return f"{headers_str}\r\n\r\n{adapter.text}"
 
                 return adapter.json()
 

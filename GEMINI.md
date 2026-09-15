@@ -14,8 +14,8 @@ The Python component uses Playwright to automate browser sessions and download t
 | Bank | Strategy | Implementation |
 |------|----------|----------------|
 | **RBC** | Internal API | Uses `transaction-presentation-service` endpoints |
-| **BMO** | Hybrid (API Injection) | Injects JavaScript to fetch data via internal API |
-| **Amex** | Internal API | Fetches JSON from `searchTransaction.json` |
+| **BMO** | Capture & Replay | Sniffs the app's own request (device-bound headers), replays it with new date ranges |
+| **Amex** | Capture & Replay | `ReadAccountActivity.web.v1` API; harvests request, replays per statement cycle |
 | **CIBC** | Passive Token Capture | Intercepts `x-auth-token` from background requests |
 | **National Bank** | GraphQL Interception | Captures session headers to query GraphQL API |
 | **Wealthsimple** | Session Hijacking | Uses browser cookies to authorize `ws-api` client |
@@ -66,6 +66,65 @@ The TypeScript component provides a comprehensive suite of tools for managing Ac
 - **yargs**: Command-line argument parsing
 - **dotenv**: Environment variable management
 
+# Bank API & Auth Field Notes
+
+Hard-won knowledge from fixing all seven fetchers after a 2-month gap (2026-09-15). Read this before debugging any bank failure.
+
+## Universal pattern: capture & replay (don't synthesize auth)
+
+When a bank's internal API starts rejecting our hand-built requests, the durable fix is **not** to reverse-engineer their headers — it's to harvest a live request from their own web app and replay it:
+
+1. Arm Playwright listeners (`page.on("request")` / `page.on("response")`) **before** triggering the navigation — apps fire their data calls at the instant the route activates; arming after you detect the URL change means you miss the call.
+2. Let the real UI make the call (click the real card / open the real page).
+3. Replay via `page.request` or in-page `fetch` with the harvested headers verbatim, regenerating only per-request IDs (`x-request-id`, `x-fapi-interaction-id`, `x-original-request-time`, `one-data-correlation-id`).
+4. Drop the `cookie` header from the template — the browser attaches fresh ones.
+
+This auto-adapts when banks rotate API keys or add device headers. Used by `bmo.py` (`_arm_api_sniffer`) and `amex.py` (`_arm_activity_sniffer`).
+
+## SPA click races (Angular apps: BMO, Amex)
+
+- DOM render ≠ click handlers bound. A click fired the moment `querySelector` finds the element is silently swallowed. **Always verify the navigation happened** (URL contains the target route) and retry the click if not. See `bmo.py::_click_account`.
+- Playwright `page.evaluate` is blocked on Amex (their app.js monkeypatches `eval`) — use `page.request` and Playwright locators instead.
+
+## Per-bank notes
+
+### RBC — stable
+- No changes after 2 months; saved session survived. API fetch for chequing/savings; CSV fallback for cards/LOC/mortgage/investments.
+
+### BMO — device-bound auth (fixed 2026-09)
+- The transient-cache endpoint (`utility/cache/transient-extended-credit-card-data/get`) still works, but Akamai now **rejects synthesized headers with 503** (error page references `errors.edgesuite.net`). The real UI sends `x-bmo-device-fingerprint`, `x-bmo-device-id`, `x-bmo-mfa-device-token`, `x-bmo-user-session-id`. The old hardcoded `x-api-key` is gone from real requests entirely.
+- `mfaDeviceToken` also appears in the `customer-access-entitlement/accounts/entitlements` response (valid ~365 days).
+- Accounts page load bounces through a CIAM OAuth callback (~20 s); a 401 on `signout/signOut` during startup is normal noise.
+- Card details route: `/banking/digital/account-details/cc/<uuid>?tab=overview`; the details-page API cluster (incl. the transient-cache call) fires when the route activates.
+- Date ranges must not cross calendar years (still true).
+
+### Amex — new API + session traps (fixed 2026-09)
+- `searchTransaction.json` is **retired**. New API: `POST https://functions.americanexpress.com/ReadAccountActivity.web.v1`.
+- Body: `{"accountToken": "<stable per-card id, not a session token>", "axplocale": "en-CA", "transactionFilters": {"limit": 100, "offset": 1}, "view": "RECENT" | "BILLED", "cycleIndex": N}` — `cycleIndex` is top-level and only with `view: "BILLED"`.
+- Required headers: `ce-source: WEB` and `one-data-correlation-id: CSR-<uuid4>`; auth is browser cookies.
+- The RECENT response contains `statementPeriods` (list of `{startDate, endDate, cycleIndex}`) and `member.startDateForSearch` — enumerate cycles from that, then fetch each with `view: "BILLED"`.
+- **Session trap 1:** navigating to the legacy `/activity/recent` URL triggers an SSO `DestPage` re-handshake that *invalidates the saved session on every launch*. Always land on `/activity?COUNTRY_CODE=CA&cycleIndex=N`. This single fix ended the login-every-run loop.
+- **Session trap 2:** login-page URLs contain the literal string "activity" inside the `DestPage` query param (only slashes get percent-encoded) — any URL match must require `activity` AND require `login` absent. Also, post-login may open a **new tab**: scan `context.pages`, not just `self.page`.
+- Amounts are money objects: `{"currency": "CAD", "amount": "29.56"}`. Pending items carry only `displayDate`; posted items have `chargeDate`/`postDate`. Status lives in `status` / `message.id`.
+- Sessions are short-lived (minutes); expect roughly one manual login per run. The fallback request constants (accountToken etc.) live in `AmexDownloader` class attributes.
+
+### Wealthsimple — ws-api version drift (fixed 2026-09)
+- The `ws-api` pip package evolves its internals: `send_http_request` grew a `return_response` kwarg (v0.35.0) that our monkey-patch must accept. After any `pip install -U ws-api`, diff the patch in `wealthsimple.py::_setup_monkey_patch` against `venv/lib/python3.14/site-packages/ws_api/wealthsimple_api.py`.
+- Session hijack from browser cookies + localStorage still works; sessions survive months.
+
+### Canadian Tire — rate limiting
+- Aggressive statement-date sweeping (±12 days per guessed date × many months) trips **HTTP 429**. Remedy: wait ~1 h, then re-run targeted: `python main.py --bank canadiantire --since 2026-08` (limits generated dates, dedup handles overlap).
+
+### CIBC / National Bank — stable
+- No changes after 2 months; sessions survived.
+
+## Ops notes
+
+- Run fetchers unattended in background with `PYTHONUNBUFFERED=1` so logs stream to file.
+- All banks share one Chrome profile — the real daily profile (`~/.config/google-chrome`, directory `Default` = "Shawn"); banks run sequentially — never two fetchers at once. Daily Chrome must be fully closed before fetching (user-data-dir singleton lock).
+- Manual 2FA happens in the visible browser window; each bank's `login()` prints instructions and waits (5 min default).
+- When killing background fetch processes, `pkill -f` patterns match your own monitoring shell's command line — prefer `ps aux | grep "[v]env/bin/python main.py"` to check state.
+
 # Building and Running
 
 ## Python Setup
@@ -91,33 +150,41 @@ python -m pip install -r requirements.txt
 
 ### 3. Configuration
 
-Create a `config.yaml` file in the project root or `~/.ledger_fetch/`:
+Create a `config.yaml` file in the project root or `~/.ledger_fetch/` (the live config lives at `config/config.yaml`):
 
 ```yaml
-browser_profile_path: C:/Users/YourUser/.ledger_fetch_chrome_profile
-transactions_path: ./transactions
-headless: false
-timeout: 30000
+browser:
+  headless: false
+  timeout: 30000
+  # Real Chrome user data dir + the "Shawn" (Default) profile, so bank logins
+  # are shared with daily browsing. Daily Chrome must be fully closed while
+  # fetching, or Chrome's singleton lock breaks the launch.
+  profile_path: ~/.config/google-chrome
+  profile_directory: Default
 
-# Enable/disable specific banks
-rbc:
-  enabled: true
-wealthsimple:
-  enabled: true
-amex:
-  enabled: true
-  accounts:
-    - id: "AMEX"
-      invert_credit_transactions: true
-canadiantire:
-  enabled: true
-  days_to_fetch: 150
-bmo:
-  enabled: true
-cibc:
-  enabled: true
-national_bank:
-  enabled: true
+ledger_fetch:
+  transactions_path: ./transactions
+
+  # Enable/disable specific banks
+  banks:
+    rbc:
+      enabled: true
+    wealthsimple:
+      enabled: true
+    amex:
+      enabled: true
+      accounts:
+        - id: "AMEX"
+          invert_credit_transactions: true
+    canadiantire:
+      enabled: true
+      days_to_fetch: 150
+    bmo:
+      enabled: true
+    cibc:
+      enabled: true
+    national_bank:
+      enabled: true
 ```
 
 ### 4. Running the Fetcher
