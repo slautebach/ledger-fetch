@@ -624,49 +624,61 @@ class CanadianTireDownloader(BankDownloader):
                 }
             """)
             csrf_token = csrf_info.get("csrftoken", "")
-            
+
             post_data = {
                 "category": category,
                 "statementDate": statement_date,
                 "transientReference": transient_ref
             }
-            
-            result = self.page.evaluate("""
-                async (params) => {
-                    try {
-                        const headers = {
-                            'Content-Type': 'application/json',
-                            'X-Requested-With': 'XMLHttpRequest'
-                        };
-                        if (params.csrftoken) {
-                            headers['csrftoken'] = params.csrftoken;
+
+            from .utils import with_retries
+
+            def do_fetch():
+                return self.page.evaluate("""
+                    async (params) => {
+                        try {
+                            const headers = {
+                                'Content-Type': 'application/json',
+                                'X-Requested-With': 'XMLHttpRequest'
+                            };
+                            if (params.csrftoken) {
+                                headers['csrftoken'] = params.csrftoken;
+                            }
+                            const response = await fetch(params.url, {
+                                method: 'POST',
+                                headers: headers,
+                                credentials: 'include',
+                                body: JSON.stringify(params.data)
+                            });
+                            const text = await response.text();
+                            return {
+                                ok: response.ok,
+                                status: response.status,
+                                text: text
+                            };
+                        } catch (error) {
+                            return { error: error.message };
                         }
-                        const response = await fetch(params.url, {
-                            method: 'POST',
-                            headers: headers,
-                            credentials: 'include',
-                            body: JSON.stringify(params.data)
-                        });
-                        const text = await response.text();
-                        return {
-                            ok: response.ok,
-                            status: response.status,
-                            text: text
-                        };
-                    } catch (error) {
-                        return { error: error.message };
                     }
-                }
-            """, {
-                "url": api_url,
-                "data": post_data,
-                "csrftoken": csrf_token
-            })
-            
+                """, {
+                    "url": api_url,
+                    "data": post_data,
+                    "csrftoken": csrf_token
+                })
+
+            # CTFS rate-limits (429) under aggressive statement sweeping
+            result = with_retries(
+                do_fetch,
+                should_retry=lambda r: (isinstance(r, dict)
+                                        and r.get("status") in (429, 500, 502, 503, 504)),
+                attempts=3, base_delay=4.0,
+                desc=f"CTFS {statement_date}",
+            )
+
             if "error" in result:
                 print(f"Fetch error: {result['error']}")
                 return None
-                
+
             if not result.get("ok"):
                 print(f"API error: {result.get('status')}")
                 return None

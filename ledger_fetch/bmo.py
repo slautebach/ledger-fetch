@@ -125,8 +125,10 @@ class BMODownloader(BankDownloader):
 
     def download_transactions(self) -> List[Transaction]:
         """Fetch transactions for all credit card accounts."""
-        
-        accounts = self.fetch_accounts()
+
+        # Base class already fetched accounts into the cache; only re-scrape
+        # if the cache is empty (e.g. accounts step failed there).
+        accounts = list(self.accounts_cache.values()) or self.fetch_accounts()
         
         if not accounts:
             print("No credit card accounts found.")
@@ -474,48 +476,59 @@ class BMODownloader(BankDownloader):
         (x-request-id, x-fapi-interaction-id, x-original-request-time).
         """
         try:
-            result = self.page.evaluate("""
-                async (params) => {
-                    const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-                        const r = Math.random() * 16 | 0;
-                        const v = c === 'x' ? r : (r & 0x3 | 0x8);
-                        return v.toString(16);
-                    });
-                    const headers = Object.assign({}, params.headers);
-                    if ('x-request-id' in headers) {
-                        headers['x-request-id'] = 'REQ_' + Array.from({length: 16},
-                            () => Math.floor(Math.random() * 16).toString(16)).join('');
-                    }
-                    if ('x-fapi-interaction-id' in headers) {
-                        headers['x-fapi-interaction-id'] = uuid();
-                    }
-                    headers['x-original-request-time'] = new Date().toUTCString();
+            from .utils import with_retries
 
-                    const body = Object.assign({}, params.body, {
-                        fromDate: params.fromDate,
-                        toDate: params.toDate
-                    });
-
-                    try {
-                        const resp = await fetch(params.url, {
-                            method: 'POST',
-                            headers: headers,
-                            credentials: 'include',
-                            body: JSON.stringify(body)
+            def do_evaluate():
+                return self.page.evaluate("""
+                    async (params) => {
+                        const uuid = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+                            const r = Math.random() * 16 | 0;
+                            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                            return v.toString(16);
                         });
-                        const text = await resp.text();
-                        return {ok: resp.ok, status: resp.status, text: text};
-                    } catch (e) {
-                        return {error: e.message};
+                        const headers = Object.assign({}, params.headers);
+                        if ('x-request-id' in headers) {
+                            headers['x-request-id'] = 'REQ_' + Array.from({length: 16},
+                                () => Math.floor(Math.random() * 16).toString(16)).join('');
+                        }
+                        if ('x-fapi-interaction-id' in headers) {
+                            headers['x-fapi-interaction-id'] = uuid();
+                        }
+                        headers['x-original-request-time'] = new Date().toUTCString();
+
+                        const body = Object.assign({}, params.body, {
+                            fromDate: params.fromDate,
+                            toDate: params.toDate
+                        });
+
+                        try {
+                            const resp = await fetch(params.url, {
+                                method: 'POST',
+                                headers: headers,
+                                credentials: 'include',
+                                body: JSON.stringify(body)
+                            });
+                            const text = await resp.text();
+                            return {ok: resp.ok, status: resp.status, text: text};
+                        } catch (e) {
+                            return {error: e.message};
+                        }
                     }
-                }
-            """, {
-                "url": template["url"],
-                "headers": template["headers"],
-                "body": template["body"],
-                "fromDate": from_date,
-                "toDate": to_date,
-            })
+                """, {
+                    "url": template["url"],
+                    "headers": template["headers"],
+                    "body": template["body"],
+                    "fromDate": from_date,
+                    "toDate": to_date,
+                })
+
+            result = with_retries(
+                do_evaluate,
+                should_retry=lambda r: (isinstance(r, dict)
+                                        and r.get("status") in (429, 500, 502, 503, 504)),
+                attempts=3, base_delay=3.0,
+                desc=f"BMO replay {from_date}",
+            )
 
             if "error" in result:
                 print(f"  API fetch error: {result['error']}")

@@ -149,8 +149,8 @@ class BankDownloader(ABC):
                 f"--profile-directory={self.config.browser.profile_directory}"
             )
 
-        # Setup HAR recording if debug is enabled
-        if self.config.ledger_fetch.debug:
+        # Setup HAR recording if debug or diagnose is enabled
+        if self.config.ledger_fetch.debug or self.config.ledger_fetch.diagnose:
             from datetime import datetime
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             har_dir = self.config.ledger_fetch.transactions_path / "debug_logs"
@@ -158,10 +158,69 @@ class BankDownloader(ABC):
             har_path = har_dir / f"{self.get_bank_name()}_{timestamp}.har"
             print(f"Network traffic will be recorded to: {har_path}")
             launch_args["record_har_path"] = str(har_path)
-        
+
         self.context = self.playwright.chromium.launch_persistent_context(**launch_args)
         self.context.set_default_timeout(self.config.browser.timeout)
         self.page = self.context.new_page()
+
+        if self.config.ledger_fetch.diagnose:
+            self._attach_traffic_recorder()
+
+    def _attach_traffic_recorder(self):
+        """
+        Record every XHR/fetch exchange to a JSONL file while diagnosing.
+
+        Replaces the ad-hoc traffic-capture debug scripts: run with
+        ``--diagnose``, reproduce the problem in the browser, then read
+        ``transactions/debug_logs/<bank>_<ts>_traffic.jsonl``.
+        """
+        import json
+        from datetime import datetime
+
+        out_path = (self.config.ledger_fetch.transactions_path / "debug_logs" /
+                    f"{self.get_bank_name()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_traffic.jsonl")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(out_path, "a", encoding="utf-8", buffering=1)
+        print(f"Traffic recorder enabled: {out_path}")
+
+        def on_request(request):
+            if request.resource_type not in ("xhr", "fetch"):
+                return
+            rec = {
+                "ts": datetime.now().isoformat(),
+                "dir": "REQ",
+                "method": request.method,
+                "url": request.url,
+                "headers": {k: v for k, v in request.headers.items()
+                            if k.lower().startswith("x-") or k.lower() in ("content-type", "accept")},
+            }
+            try:
+                if request.post_data:
+                    rec["body"] = request.post_data[:4000]
+            except Exception:
+                pass
+            fh.write(json.dumps(rec, default=str) + "\n")
+
+        def on_response(response):
+            if response.request.resource_type not in ("xhr", "fetch"):
+                return
+            rec = {
+                "ts": datetime.now().isoformat(),
+                "dir": "RESP",
+                "status": response.status,
+                "url": response.url,
+            }
+            try:
+                ct = response.headers.get("content-type", "")
+                if "json" in ct or "text" in ct:
+                    rec["body"] = response.text()[:8000]
+            except Exception as e:
+                rec["body_error"] = str(e)
+            fh.write(json.dumps(rec, default=str) + "\n")
+
+        self.page.on("request", on_request)
+        self.page.on("response", on_response)
+        self.context.on("close", lambda _c: fh.close())
 
     @abstractmethod
     def login(self):
@@ -208,13 +267,13 @@ class BankDownloader(ABC):
     def save_transactions(self, transactions: List[Transaction]):
         """Save transactions to CSV."""
         from .utils import CSVWriter
-        
+
         # Deduplicate based on unique_transaction_id to handle overlapping downloads
         # (e.g. "Recent Activity" vs "Monthly Statement" often contain the same transactions)
-        # Apply --since filter if configured
-        since_month = getattr(self.config.ledger_fetch, 'since_month', None)
+        # Apply since filter if configured (per-bank window first, then global config)
+        since_month = self.effective_since or getattr(self.config.ledger_fetch, 'since_month', None)
         if since_month:
-            print(f"DEBUG: Filtering transactions since {since_month:7}...")
+            print(f"Saving transactions since {since_month}...")
             transactions = [t for t in transactions if t.date and str(t.date)[:7] >= since_month]
 
         unique_txns = {}
@@ -295,7 +354,14 @@ class BankDownloader(ABC):
         
         for month, txns in by_month.items():
             writer.write(txns, f"{month}.csv", fieldnames=Transaction.CSV_FIELDS)
-            
+
+        # Run summary stats (read by main.py after each bank completes)
+        self.last_run_stats = {
+            "transactions": len(txn_dicts),
+            "newest_date": max((d.get("Date", "") for d in txn_dicts), default=""),
+            "months_written": sorted(by_month.keys()),
+        }
+
         # Ensure accounts exist
         self.ensure_accounts_exist(transactions)
 

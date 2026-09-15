@@ -1,8 +1,14 @@
-playwright
-pandas
-pydantic-settings
-pyyaml
-ws-api
-pdfplumber
-monopoly-core
-python-dotenv
+# Pinned 2026-09-15 against the working venv (Python 3.14).
+# Upgrade deliberately: the ws-api monkey-patch in ledger_fetch/wealthsimple.py
+# must be re-diffed against the installed ws_api source on any bump.
+playwright==1.61.0
+pandas==3.0.3
+pydantic==2.13.4
+pydantic-settings==2.14.2
+PyYAML==6.0.3
+ws-api==0.35.0
+pdfplumber==0.11.10
+monopoly-core==0.19.3
+python-dotenv==1.2.2
+requests==2.34.2
+pytest==9.1.1

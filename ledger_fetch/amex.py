@@ -382,22 +382,36 @@ class AmexDownloader(BankDownloader):
         POST a ReadAccountActivity request via page.request.
 
         Cookies are attached automatically from the browser context. The two
-        custom headers the API requires are regenerated per call.
+        custom headers the API requires are regenerated per call (and per
+        retry). Transient 401/429/5xx responses are retried with backoff -
+        the API sometimes 401s once on token warm-up before succeeding.
         """
-        import uuid as _uuid
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "Referer": "https://global.americanexpress.com/activity?COUNTRY_CODE=CA&cycleIndex=0",
-            "ce-source": "WEB",
-            "one-data-correlation-id": f"CSR-{_uuid.uuid4()}",
-        }
-        response = self.page.request.post(
-            api_url or self._activity_api_url, headers=headers,
-            data=json.dumps(payload),
+        from .utils import with_retries
+
+        def do_post():
+            import uuid as _uuid
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Referer": "https://global.americanexpress.com/activity?COUNTRY_CODE=CA&cycleIndex=0",
+                "ce-source": "WEB",
+                "one-data-correlation-id": f"CSR-{_uuid.uuid4()}",
+            }
+            return self.page.request.post(
+                api_url or self._activity_api_url, headers=headers,
+                data=json.dumps(payload),
+            )
+
+        response = with_retries(
+            do_post,
+            should_retry=lambda r: r is not None and r.status in (401, 429, 500, 502, 503, 504),
+            attempts=3, base_delay=2.0,
+            desc="ReadAccountActivity",
         )
-        if not response.ok:
-            print(f"  API error status: {response.status} {response.text()[:200]}")
+        if response is None or not response.ok:
+            status = response.status if response else "?"
+            text = response.text()[:200] if response else ""
+            print(f"  API error status: {status} {text}")
             return None
         try:
             return response.json()
