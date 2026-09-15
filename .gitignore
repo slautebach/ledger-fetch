@@ -212,3 +212,4 @@ __marimo__/
 /actual-sync/node_modules
 /debug/
 .env
+tests/fixtures/
